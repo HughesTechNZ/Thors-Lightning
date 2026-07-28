@@ -87,19 +87,9 @@ the project.
 
 ## Changelog
 
-### v1.5.1
+### v1.0
 
-- Moved the Safety box to the bottom of the screen-adjustment card.
-- Recording a button that is already mapped now swaps it into the selected
-  slot and moves the previous button to the old slot.
-
-### v1.5.0
-
-- Added the Thor's Lightning app name and launcher icon.
-- Added configurable modifier, Bright, and Dimmer mappings.
-- Added top, bottom, and both-screen brightness targeting.
-- Added optional root support for D-pad and analog-stick brightness mappings.
-- Added clearer root, reservation, and setup prompts.
+- Initial public release.
 
 ## License
 
