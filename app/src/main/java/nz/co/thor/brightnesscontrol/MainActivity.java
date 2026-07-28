@@ -74,7 +74,7 @@ public class MainActivity extends Activity {
         header.setGravity(Gravity.CENTER_VERTICAL);
         LinearLayout heading = new LinearLayout(this);
         heading.setOrientation(LinearLayout.VERTICAL);
-        TextView title = text("Thor’s Lightning ⚡", 22, true);
+        TextView title = text("Thor’s Lightning ⚡ " + appVersionName(), 22, true);
         heading.addView(title);
         TextView subtitle = text("Dual-Screen Brightness Control", 13, false);
         subtitle.setTextColor(themeColor(android.R.attr.textColorSecondary));
@@ -558,6 +558,14 @@ public class MainActivity extends Activity {
 
     private void updateRepeatLabel(int delay) {
         repeatLabel.setText(delay + " ms between steps");
+    }
+
+    private String appVersionName() {
+        try {
+            return "v" + getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
+        } catch (Exception ignored) {
+            return "";
+        }
     }
 
     private boolean hasRootAccess() {
