@@ -72,7 +72,7 @@ public class MainActivity extends Activity {
         header.setGravity(Gravity.CENTER_VERTICAL);
         LinearLayout heading = new LinearLayout(this);
         heading.setOrientation(LinearLayout.VERTICAL);
-        TextView title = text("Thor’s Lightning", 22, true);
+        TextView title = text("Thor’s Lightning ⚡", 22, true);
         heading.addView(title);
         TextView subtitle = text("Dual-Screen Brightness Control", 13, false);
         subtitle.setTextColor(themeColor(android.R.attr.textColorSecondary));
