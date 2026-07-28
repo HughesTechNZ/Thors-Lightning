@@ -1,0 +1,7 @@
+.gradle/
+app/build/
+build/
+local.properties
+work/
+work-screen.png
+work-window.xml

@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Thor’s Lightning</string>
+    <string name="service_name">Thor’s Lightning controls</string>
+    <string name="service_description">Uses configurable controller buttons to adjust brightness on the AYN Thor. It does not read screen content.</string>
+</resources>
