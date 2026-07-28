@@ -32,6 +32,18 @@ The non-root path is built around Android's accessibility key-event handling.
 Root input support is optional and exists for controls that Android does not
 deliver through the same route.
 
+## Brightness behavior
+
+When **Both** is selected, Thor's Lightning adjusts the top and bottom screens
+relative to their current brightness. Each press applies the same step to each
+screen, so if the top screen is brighter than the bottom screen, it stays
+brighter while both move up or down together.
+
+The screens only become equal when they already start at the same brightness,
+or when one screen reaches the minimum or maximum brightness limit and the
+other screen continues until it reaches the same limit. This keeps manual
+top/bottom brightness differences intact during normal adjustment.
+
 ## Requirements
 
 - AYN Thor running the compatible Android 13 firmware
