@@ -87,6 +87,12 @@ the project.
 
 ## Changelog
 
+### v1.5.1
+
+- Moved the Safety box to the bottom of the screen-adjustment card.
+- Recording a button that is already mapped now swaps it into the selected
+  slot and moves the previous button to the old slot.
+
 ### v1.5.0
 
 - Added the Thor's Lightning app name and launcher icon.

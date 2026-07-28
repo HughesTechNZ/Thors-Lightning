@@ -24,6 +24,7 @@ import android.widget.LinearLayout;
 import android.widget.RadioButton;
 import android.widget.RadioGroup;
 import android.widget.SeekBar;
+import android.widget.Space;
 import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -36,6 +37,7 @@ public class MainActivity extends Activity {
     private TextView stepLabel;
     private TextView repeatLabel;
     private TextView rootStatus;
+    private TextView modifierMappingLabel;
     private TextView brighterMappingLabel;
     private TextView dimmerMappingLabel;
     private TextView safetyLabel;
@@ -311,6 +313,10 @@ public class MainActivity extends Activity {
         });
         behaviour.addView(repeat);
 
+        Space safetySpacer = new Space(this);
+        behaviour.addView(safetySpacer, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+
         safetyLabel = text("", 12, false);
         safetyLabel.setTextColor(Color.rgb(80, 60, 20));
         safetyLabel.setBackgroundColor(Color.rgb(255, 246, 210));
@@ -327,6 +333,7 @@ public class MainActivity extends Activity {
         row.setGravity(Gravity.CENTER_VERTICAL);
         row.setMinimumHeight(dp(52));
         TextView label = text(mappingLabel(title, currentKey), 14, true);
+        if (Prefs.MODIFIER.equals(preference)) modifierMappingLabel = label;
         if (Prefs.UP_KEY.equals(preference)) brighterMappingLabel = label;
         if (Prefs.DOWN_KEY.equals(preference)) dimmerMappingLabel = label;
         row.addView(label, new LinearLayout.LayoutParams(
@@ -382,15 +389,6 @@ public class MainActivity extends Activity {
                     Toast.LENGTH_LONG).show();
             return true;
         }
-        int modifier = prefs.getInt(Prefs.MODIFIER, KeyEvent.KEYCODE_BUTTON_R1);
-        int up = prefs.getInt(Prefs.UP_KEY, KeyEvent.KEYCODE_VOLUME_UP);
-        int down = prefs.getInt(Prefs.DOWN_KEY, KeyEvent.KEYCODE_VOLUME_DOWN);
-        if ((capturePreference.equals(Prefs.MODIFIER) && (code == up || code == down))
-                || (capturePreference.equals(Prefs.UP_KEY) && (code == modifier || code == down))
-                || (capturePreference.equals(Prefs.DOWN_KEY) && (code == modifier || code == up))) {
-            Toast.makeText(this, "Each mapping must use a different button", Toast.LENGTH_SHORT).show();
-            return true;
-        }
         endCapture(true, code);
         return true;
     }
@@ -399,14 +397,60 @@ public class MainActivity extends Activity {
         capturing = false;
         prefs.edit().putBoolean(Prefs.CAPTURING, false).apply();
         if (save) {
-            prefs.edit().putInt(capturePreference, code).apply();
-            captureLabel.setText(captureTitle + ": " + keyName(code));
-            captureMessage.setText("Saved " + captureTitle + " as " + keyName(code) + ".");
+            String swappedTitle = saveMappingWithSwap(code);
+            updateRootMappingLabels();
+            if (swappedTitle == null) {
+                captureMessage.setText("Saved " + captureTitle + " as " + keyName(code) + ".");
+            } else {
+                captureMessage.setText("Saved " + captureTitle + " as " + keyName(code)
+                        + " and moved the old button to " + swappedTitle + ".");
+            }
             updateSafetyText();
         } else {
             captureMessage.setText("Recording cancelled.");
         }
         captureMessage.setTextColor(themeColor(android.R.attr.textColorSecondary));
+    }
+
+    private String saveMappingWithSwap(int code) {
+        int oldCaptureCode = prefs.getInt(capturePreference, defaultKeyFor(capturePreference));
+        String conflictingPreference = conflictingPreferenceFor(code);
+        SharedPreferences.Editor editor = prefs.edit().putInt(capturePreference, code);
+        if (conflictingPreference != null) {
+            editor.putInt(conflictingPreference, oldCaptureCode);
+        }
+        editor.apply();
+        return titleForPreference(conflictingPreference);
+    }
+
+    private String conflictingPreferenceFor(int code) {
+        if (!Prefs.MODIFIER.equals(capturePreference)
+                && prefs.getInt(Prefs.MODIFIER, KeyEvent.KEYCODE_BUTTON_R1) == code) {
+            return Prefs.MODIFIER;
+        }
+        if (!Prefs.UP_KEY.equals(capturePreference)
+                && prefs.getInt(Prefs.UP_KEY, KeyEvent.KEYCODE_VOLUME_UP) == code) {
+            return Prefs.UP_KEY;
+        }
+        if (!Prefs.DOWN_KEY.equals(capturePreference)
+                && prefs.getInt(Prefs.DOWN_KEY, KeyEvent.KEYCODE_VOLUME_DOWN) == code) {
+            return Prefs.DOWN_KEY;
+        }
+        return null;
+    }
+
+    private int defaultKeyFor(String preference) {
+        if (Prefs.MODIFIER.equals(preference)) return KeyEvent.KEYCODE_BUTTON_R1;
+        if (Prefs.UP_KEY.equals(preference)) return KeyEvent.KEYCODE_VOLUME_UP;
+        if (Prefs.DOWN_KEY.equals(preference)) return KeyEvent.KEYCODE_VOLUME_DOWN;
+        return KeyEvent.KEYCODE_UNKNOWN;
+    }
+
+    private String titleForPreference(String preference) {
+        if (Prefs.MODIFIER.equals(preference)) return "Modifier";
+        if (Prefs.UP_KEY.equals(preference)) return "Brighter";
+        if (Prefs.DOWN_KEY.equals(preference)) return "Dimmer";
+        return null;
     }
 
     @Override
@@ -556,6 +600,10 @@ public class MainActivity extends Activity {
     }
 
     private void updateRootMappingLabels() {
+        if (modifierMappingLabel != null) {
+            modifierMappingLabel.setText(mappingLabel("Modifier",
+                    prefs.getInt(Prefs.MODIFIER, KeyEvent.KEYCODE_BUTTON_R1)));
+        }
         if (brighterMappingLabel != null) {
             brighterMappingLabel.setText(mappingLabel("Brighter",
                     prefs.getInt(Prefs.UP_KEY, KeyEvent.KEYCODE_VOLUME_UP)));
