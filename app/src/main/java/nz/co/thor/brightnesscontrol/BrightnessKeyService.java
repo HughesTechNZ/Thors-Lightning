@@ -67,6 +67,16 @@ public class BrightnessKeyService extends AccessibilityService {
             return isRemappingEnabled() && reserveModifier;
         }
 
+        // Root axis mode is an alternate input source. Do not also run the
+        // configured button mappings (including the default volume keys), or
+        // a volume press would still change brightness while D-pad/stick input
+        // is selected.
+        if (prefs.getBoolean(Prefs.ROOT_AXES, false)) {
+            volumeUpDown = false;
+            volumeDownDown = false;
+            return false;
+        }
+
         if (keyCode == upKey) {
             volumeUpDown = down;
         } else if (keyCode == downKey) {
