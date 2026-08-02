@@ -25,6 +25,11 @@ firmware.
   left/right analog-stick directions for Bright and Dimmer controls.
 - **Modifier reservation option:** root users can optionally reserve the
   modifier itself while brightness controls are held.
+- **Service conflict handling:** select multiple accessibility services to
+  pause temporarily while the modifier is held, preventing other controller
+  tools from reacting to the same buttons at the same time.
+- **Clear setup status:** the in-app setup buttons show whether each required
+  permission is needed or enabled.
 - **Boot persistence:** Android can restart the accessibility service after
   reboot once the service has been enabled by the user.
 
@@ -64,7 +69,10 @@ input reservation matters.
 4. Complete **2. Key detection** to enable its accessibility service.
 5. Choose the modifier, Bright, Dimmer, and screen-target options.
 6. Enable root input only if you want D-pad or analog-stick mappings.
-7. Approve the Magisk root prompt if root input is enabled.
+7. If another accessibility app responds to the same controller buttons,
+   enable service suspension and select the services to pause during a
+   modifier hold.
+8. Approve the Magisk root prompt if root input is enabled.
 
 ## Building
 
