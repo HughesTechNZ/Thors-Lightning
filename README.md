@@ -9,7 +9,7 @@ firmware.
 > Technologies Co., Ltd. AYN and Thor are used only to identify the compatible
 > device. All related trademarks belong to their respective owners.
 
-![Thor's Lightning dashboard](docs/dashboard.png)
+![Thor's Lightning dashboard](docs/dashboard-v1.1.png)
 
 ## What it does
 
@@ -121,6 +121,7 @@ afterward.
 
 Additional improvements:
 
+- Improved first-time setup with a guided welcome and clearer permission steps.
 - Clearer button-mapping layout with the assigned control highlighted below its
   function.
 - Amber **- Needed** and green **- Enabled** setup indicators.
