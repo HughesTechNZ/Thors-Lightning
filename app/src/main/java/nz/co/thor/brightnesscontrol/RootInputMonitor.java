@@ -52,7 +52,10 @@ final class RootInputMonitor {
         try {
             int appPid = android.os.Process.myPid();
             String command = "echo THOR_PID:$$; "
-                    + "getevent -lt /dev/input/event12 & child=$!; "
+                    // The Thor's controller is exposed as /dev/input/event9 on
+                    // current firmware (event12 no longer exists).  Reading
+                    // the old node silently produced no D-pad/stick events.
+                    + "getevent -lt /dev/input/event9 & child=$!; "
                     + "trap 'kill $child 2>/dev/null' TERM EXIT; "
                     + "while kill -0 " + appPid + " 2>/dev/null; do sleep 1; done; "
                     + "kill $child 2>/dev/null; wait $child";
