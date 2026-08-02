@@ -63,16 +63,18 @@ input reservation matters.
 
 ## Installation
 
-1. Download the APK from the latest GitHub release.
-2. Install it as a normal Android APK.
-3. Open Thor's Lightning and complete **1. Brightness permission**.
-4. Complete **2. Key detection** to enable its accessibility service.
-5. Choose the modifier, Bright, Dimmer, and screen-target options.
-6. Enable root input only if you want D-pad or analog-stick mappings.
-7. If another accessibility app responds to the same controller buttons,
-   enable service suspension and select the services to pause during a
-   modifier hold.
-8. Approve the root-access prompt from your installed root manager if root input is enabled.
+1. Download the APK from the latest GitHub release and install it as a normal
+   Android APK.
+2. Open **Thor's Lightning** and tap **Set up permissions**.
+3. Follow the on-screen guide to allow **Modify system settings**, then enable
+   **Thor's Lightning controls** under Android Accessibility. Return to the app
+   after each settings page; the guide will take you to the next step.
+4. Choose the modifier, Bright, Dimmer, and screen-target options.
+5. Enable root input only if you want D-pad or analog-stick mappings, then
+   approve the root-access prompt from your installed root manager.
+6. If another accessibility app responds to the same controller buttons, turn
+   on **Suspend services during hold** and select the services to pause while
+   the modifier is held.
 
 ## Building
 
