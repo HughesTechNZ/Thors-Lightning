@@ -2,6 +2,8 @@ package nz.co.thor.brightnesscontrol;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.accessibilityservice.AccessibilityServiceInfo;
+import android.view.accessibility.AccessibilityManager;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
@@ -9,11 +11,16 @@ import android.content.SharedPreferences;
 import android.content.res.Resources;
 import android.content.res.Configuration;
 import android.graphics.Color;
+import android.content.res.ColorStateList;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Bundle;
 import android.provider.Settings;
 import android.text.TextUtils;
+import android.text.SpannableString;
+import android.text.Spanned;
+import android.text.style.ForegroundColorSpan;
+import android.text.style.BackgroundColorSpan;
 import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.View;
@@ -41,6 +48,11 @@ public class MainActivity extends Activity {
     private TextView brighterMappingLabel;
     private TextView dimmerMappingLabel;
     private TextView safetyLabel;
+    private Button brightnessPermissionButton;
+    private Button keyDetectionButton;
+    private Button checkRootButton;
+    private boolean rootCheckRunning;
+    private RadioGroup axisSources;
     private Switch enabledSwitch;
     private final SharedPreferences.OnSharedPreferenceChangeListener preferenceListener =
             (sharedPreferences, key) -> {
@@ -68,17 +80,15 @@ public class MainActivity extends Activity {
     private void buildUi() {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(dp(16), dp(4), dp(16), dp(14));
+        root.setPadding(dp(16), dp(2), dp(16), dp(14));
 
         LinearLayout header = new LinearLayout(this);
         header.setGravity(Gravity.CENTER_VERTICAL);
         LinearLayout heading = new LinearLayout(this);
         heading.setOrientation(LinearLayout.VERTICAL);
-        TextView title = text("Thor’s Lightning ⚡ " + appVersionName(), 22, true);
+        TextView title = text("Thor’s Lightning ⚡ " + appVersionName()
+                + " · Dual-Screen Brightness Control", 22, true);
         heading.addView(title);
-        TextView subtitle = text("Dual-Screen Brightness Control", 13, false);
-        subtitle.setTextColor(themeColor(android.R.attr.textColorSecondary));
-        heading.addView(subtitle);
         header.addView(heading, new LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
@@ -89,7 +99,7 @@ public class MainActivity extends Activity {
         enabledSwitch.setOnCheckedChangeListener((button, checked) ->
                 prefs.edit().putBoolean(Prefs.ENABLED, checked).apply());
         header.addView(enabledSwitch);
-        root.addView(header, matchMargins(0, 0, 0, 8));
+        root.addView(header, matchMargins(0, 0, 0, 2));
 
         LinearLayout columns = new LinearLayout(this);
         columns.setOrientation(LinearLayout.HORIZONTAL);
@@ -100,27 +110,33 @@ public class MainActivity extends Activity {
         LinearLayout mappings = card();
         LinearLayout behaviour = card();
         columns.addView(setup, weightedCardMargins(0, 0, 6, 0));
-        columns.addView(mappings, weightedCardMargins(6, 0, 6, 0));
+        LinearLayout.LayoutParams mappingCardParams = weightedCardMargins(6, 0, 6, 0);
+        mappingCardParams.weight = 1f;
+        columns.addView(mappings, mappingCardParams);
         columns.addView(behaviour, weightedCardMargins(6, 0, 0, 0));
 
         setup.addView(section("Setup"));
         permissionStatus = text("", 14, true);
-        setup.addView(permissionStatus, margins(0, 4, 0, 5));
+        permissionStatus.setVisibility(View.GONE);
+        setup.addView(permissionStatus, margins(0, 2, 0, 2));
+        TextView setupHint = text("Tap each button to enable the required permission.", 11, false);
+        setupHint.setTextColor(themeColor(android.R.attr.textColorSecondary));
+        setup.addView(setupHint, margins(0, 0, 0, 3));
 
-        Button writeSettings = button("1. Brightness permission");
-        styleSetupButton(writeSettings);
-        writeSettings.setOnClickListener(v -> {
+        brightnessPermissionButton = button("1. Brightness permission");
+        styleSetupButton(brightnessPermissionButton);
+        brightnessPermissionButton.setOnClickListener(v -> {
             Intent intent = new Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS,
                     Uri.parse("package:" + getPackageName()));
             startActivity(intent);
         });
-        setup.addView(writeSettings, matchMargins(0, 0, 0, 3));
+        setup.addView(brightnessPermissionButton, matchMargins(0, 0, 0, -4));
 
-        Button accessibility = button("2. Key detection");
-        styleSetupButton(accessibility);
-        accessibility.setOnClickListener(v ->
+        keyDetectionButton = button("2. Key detection");
+        styleSetupButton(keyDetectionButton);
+        keyDetectionButton.setOnClickListener(v ->
                 startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
-        setup.addView(accessibility, matchMargins(0, 0, 0, 12));
+        setup.addView(keyDetectionButton, matchMargins(0, 0, 0, 0));
 
         addRootControls(setup);
 
@@ -134,6 +150,10 @@ public class MainActivity extends Activity {
                 prefs.getInt(Prefs.UP_KEY, KeyEvent.KEYCODE_VOLUME_UP), true);
         addMappingRow(mappings, "Dimmer", Prefs.DOWN_KEY,
                 prefs.getInt(Prefs.DOWN_KEY, KeyEvent.KEYCODE_VOLUME_DOWN), true);
+        LinearLayout.LayoutParams axisRowParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        axisRowParams.setMargins(0, dp(6), 0, dp(1));
+        mappings.addView(axisSources, axisRowParams);
         captureMessage = text("Use Volume, face, shoulder, stick-click, Start or Select buttons. D-pad and stick directions require root.", 12, false);
         captureMessage.setTextColor(themeColor(android.R.attr.textColorSecondary));
         mappings.addView(captureMessage, margins(0, 7, 0, 6));
@@ -164,57 +184,42 @@ public class MainActivity extends Activity {
         });
         mappings.addView(consume, matchMargins(0, 0, 0, 0));
         TextView consumeHint = text(
-                "Brighter and Dimmer buttons are always blocked while the modifier is held. This option also blocks the modifier itself.",
+                "Mapped buttons reserve while held; this also reserves the modifier.",
                 11, false);
         consumeHint.setTextColor(themeColor(android.R.attr.textColorSecondary));
         mappings.addView(consumeHint, margins(0, 0, 0, 2));
-
         addBehaviourControls(behaviour);
         setContentView(root);
         root.post(this::maybeShowSetupGuide);
     }
 
     private void addRootControls(LinearLayout parent) {
-        parent.addView(section("Root axis input"), margins(0, 8, 0, 0));
+        parent.addView(section("Root axis input"), margins(0, 2, 0, 0));
         Switch rootAxes = new Switch(this);
         rootAxes.setText("Enable D-pad / Joystick");
         rootAxes.setTextSize(14);
         rootAxes.setChecked(prefs.getBoolean(Prefs.ROOT_AXES, false));
         parent.addView(rootAxes);
 
-        rootStatus = text("", 12, false);
-        rootStatus.setTextColor(themeColor(android.R.attr.textColorSecondary));
-        parent.addView(rootStatus, margins(0, 1, 0, 2));
-
-        Button checkRoot = button("Check root access");
-        checkRoot.setOnClickListener(v -> {
-            checkRoot.setEnabled(false);
-            rootStatus.setText("Checking root access…");
-            new Thread(() -> {
-                boolean available = hasRootAccess();
-                runOnUiThread(() -> {
-                    checkRoot.setEnabled(true);
-                    rootStatus.setText(available
-                            ? "✓ Root access available"
-                            : "○ Root unavailable or permission denied");
-                    rootStatus.setTextColor(available
-                            ? Color.rgb(24, 110, 50) : Color.rgb(150, 80, 20));
-                });
-            }, "ThorRootCheck").start();
-        });
-        parent.addView(checkRoot, matchMargins(0, 2, 0, 2));
-
-        RadioGroup axisSources = new RadioGroup(this);
+        axisSources = new RadioGroup(this);
         axisSources.setOrientation(RadioGroup.HORIZONTAL);
+        axisSources.setPadding(0, 0, 0, 0);
+        axisSources.setClipToPadding(false);
         RadioButton dpadAxis = radio("D-pad", Prefs.AXIS_DPAD);
-        RadioButton leftAxis = radio("L stick", Prefs.AXIS_LEFT_STICK);
-        RadioButton rightAxis = radio("R stick", Prefs.AXIS_RIGHT_STICK);
-        axisSources.addView(dpadAxis, new RadioGroup.LayoutParams(
-                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        axisSources.addView(leftAxis, new RadioGroup.LayoutParams(
-                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        axisSources.addView(rightAxis, new RadioGroup.LayoutParams(
-                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        RadioButton leftAxis = radio("L-stick", Prefs.AXIS_LEFT_STICK);
+        RadioButton rightAxis = radio("R-stick", Prefs.AXIS_RIGHT_STICK);
+        dpadAxis.setTextSize(11);
+        leftAxis.setTextSize(11);
+        rightAxis.setTextSize(11);
+        dpadAxis.setSingleLine(true);
+        leftAxis.setSingleLine(true);
+        rightAxis.setSingleLine(true);
+        dpadAxis.setMinHeight(dp(32));
+        leftAxis.setMinHeight(dp(32));
+        rightAxis.setMinHeight(dp(32));
+        axisSources.addView(dpadAxis, new RadioGroup.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        axisSources.addView(leftAxis, new RadioGroup.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        axisSources.addView(rightAxis, new RadioGroup.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         int savedAxis = prefs.getInt(Prefs.AXIS_SOURCE, Prefs.AXIS_DPAD);
         (savedAxis == Prefs.AXIS_RIGHT_STICK ? rightAxis
                 : savedAxis == Prefs.AXIS_LEFT_STICK ? leftAxis : dpadAxis).setChecked(true);
@@ -227,7 +232,57 @@ public class MainActivity extends Activity {
                 updateRootMappingLabels();
             }
         });
-        parent.addView(axisSources);
+
+        rootStatus = text("", 12, false);
+        rootStatus.setTextColor(themeColor(android.R.attr.textColorSecondary));
+        parent.addView(rootStatus, margins(0, 1, 0, 2));
+
+        checkRootButton = button("Check root access");
+        Button checkRoot = checkRootButton;
+        checkRoot.setOnClickListener(v -> {
+            checkRoot.setEnabled(false);
+            rootStatus.setText("Root optional; regular mappings work without it.\nChecking root access…");
+            new Thread(() -> {
+                boolean available = hasRootAccess();
+                runOnUiThread(() -> {
+                    checkRoot.setEnabled(true);
+                    if (available) {
+                        checkRoot.setText("Check root access - Available");
+                        checkRoot.setTextColor(themeColor(android.R.attr.textColorPrimary));
+                        checkRoot.setBackgroundTintList(ColorStateList.valueOf(Color.rgb(70, 130, 75)));
+                    } else {
+                        checkRoot.setText("Check root access");
+                        checkRoot.setTextColor(themeColor(android.R.attr.textColorPrimary));
+                        checkRoot.setBackgroundTintList(null);
+                    }
+                    rootStatus.setText(available
+                            ? "Root optional; regular mappings work without it."
+                            : "Root optional; regular mappings work without it.\n○ Root unavailable or permission denied");
+                    rootStatus.setTextColor(themeColor(android.R.attr.textColorSecondary));
+                });
+            }, "ThorRootCheck").start();
+        });
+        parent.addView(checkRoot, matchMargins(0, 1, 0, -4));
+
+        Switch suspend = new Switch(this);
+        suspend.setText("Suspend services during hold");
+        suspend.setTextSize(14);
+        suspend.setChecked(prefs.getBoolean(Prefs.SUSPEND_SERVICE, false));
+        parent.addView(suspend, margins(0, 1, 0, 0));
+        TextView suspendHint = text("Root required; restores on release.", 11, false);
+        suspendHint.setTextColor(themeColor(android.R.attr.textColorSecondary));
+        parent.addView(suspendHint, margins(0, 1, 0, 2));
+        Button chooseService = button("Choose services");
+        parent.addView(chooseService, matchMargins(0, 0, 0, 0));
+        chooseService.setOnClickListener(v -> chooseSuspendedService());
+        suspend.setOnCheckedChangeListener((button, checked) -> {
+            if (checked && (!hasRootAccess() || selectedSuspendServices().isEmpty())) {
+                button.setChecked(false);
+                Toast.makeText(this, "Check root access and choose an enabled service first", Toast.LENGTH_LONG).show();
+                return;
+            }
+            prefs.edit().putBoolean(Prefs.SUSPEND_SERVICE, checked).apply();
+        });
 
         rootAxes.setOnCheckedChangeListener((button, checked) -> {
             if (checked && !hasRootAccess()) {
@@ -254,6 +309,92 @@ public class MainActivity extends Activity {
             }
         });
         updateRootStatus(rootAxes.isChecked());
+    }
+
+    private void chooseSuspendedService() {
+        AccessibilityManager manager = (AccessibilityManager) getSystemService(ACCESSIBILITY_SERVICE);
+        java.util.ArrayList<AccessibilityServiceInfo> services = new java.util.ArrayList<>();
+        if (manager != null) {
+            for (AccessibilityServiceInfo info : manager.getEnabledAccessibilityServiceList(
+                    AccessibilityServiceInfo.FEEDBACK_ALL_MASK)) {
+                String id = info.getId();
+                if (!id.startsWith(getPackageName() + "/")) services.add(info);
+            }
+            // Some Android builds return an empty list for FEEDBACK_ALL_MASK even
+            // though services are enabled. Fall back to the secure enabled list
+            // and installed service metadata so the picker remains usable.
+            if (services.isEmpty()) {
+                String enabled = Settings.Secure.getString(getContentResolver(),
+                        Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES);
+                java.util.Set<String> enabledIds = new java.util.HashSet<>();
+                if (enabled != null) enabledIds.addAll(java.util.Arrays.asList(enabled.split(":")));
+                for (AccessibilityServiceInfo info : manager.getInstalledAccessibilityServiceList()) {
+                    String id = info.getId();
+                    if (!id.startsWith(getPackageName() + "/") && enabledIds.contains(id)) services.add(info);
+                }
+                // A few firmware builds expose enabled IDs with a different
+                // component spelling. The installed list is still authoritative;
+                // use it as a final fallback and exclude this app itself.
+                if (services.isEmpty()) {
+                    for (AccessibilityServiceInfo info : manager.getInstalledAccessibilityServiceList()) {
+                        if (!info.getId().startsWith(getPackageName() + "/")) services.add(info);
+                    }
+                }
+            }
+        }
+        if (services.isEmpty()) {
+            String enabled = Settings.Secure.getString(getContentResolver(), Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES);
+            java.util.ArrayList<String> ids = new java.util.ArrayList<>();
+            if (enabled != null) for (String id : enabled.split(":"))
+                if (!id.isEmpty() && !id.startsWith(getPackageName() + "/")) ids.add(id);
+            if (ids.isEmpty()) {
+                Toast.makeText(this, "No other enabled accessibility services found", Toast.LENGTH_LONG).show();
+                return;
+            }
+            java.util.Set<String> selected = selectedSuspendServices();
+            String[] labels = ids.toArray(new String[0]);
+            boolean[] checked = new boolean[labels.length];
+            for (int i = 0; i < labels.length; i++) checked[i] = selected.contains(labels[i]);
+            new AlertDialog.Builder(this).setTitle("Choose services to suspend (" + selected.size() + " selected)")
+                    .setMultiChoiceItems(labels, checked, (dialog, which, isChecked) -> { if (isChecked) selected.add(ids.get(which)); else selected.remove(ids.get(which)); })
+                    .setNegativeButton("Cancel", null)
+                    .setPositiveButton("Save", (dialog, which) -> prefs.edit().putStringSet(Prefs.SUSPEND_SERVICE_COMPONENTS, selected).apply())
+                    .show();
+            return;
+        }
+        String[] labels = new String[services.size()];
+        for (int i = 0; i < services.size(); i++) {
+            CharSequence label = services.get(i).getResolveInfo().loadLabel(getPackageManager());
+            labels[i] = label + "\n" + services.get(i).getId();
+        }
+        java.util.Set<String> selected = selectedSuspendServices();
+        boolean[] checked = new boolean[services.size()];
+        for (int i = 0; i < services.size(); i++) checked[i] = selected.contains(services.get(i).getId());
+        AlertDialog.Builder builder = new AlertDialog.Builder(this)
+                .setTitle("Choose services to suspend")
+                .setMultiChoiceItems(labels, checked, (dialog, which, isChecked) -> {
+                    if (isChecked) selected.add(services.get(which).getId());
+                    else selected.remove(services.get(which).getId());
+                    ((AlertDialog) dialog).setTitle("Choose services to suspend (" + selected.size() + " selected)");
+                }).setNegativeButton("Cancel", null)
+                .setPositiveButton("Save", (dialog, which) -> prefs.edit()
+                        .putStringSet(Prefs.SUSPEND_SERVICE_COMPONENTS, selected)
+                        .putString(Prefs.SUSPEND_SERVICE_COMPONENT, selected.isEmpty() ? "" : selected.iterator().next())
+                        .apply());
+        AlertDialog picker = builder.create();
+        picker.setOnShowListener(dialog ->
+                picker.setTitle("Choose services to suspend (" + selected.size() + " selected)"));
+        picker.show();
+    }
+
+    private java.util.Set<String> selectedSuspendServices() {
+        java.util.Set<String> selected = new java.util.HashSet<>(prefs.getStringSet(
+                Prefs.SUSPEND_SERVICE_COMPONENTS, java.util.Collections.emptySet()));
+        if (selected.isEmpty()) {
+            String legacy = prefs.getString(Prefs.SUSPEND_SERVICE_COMPONENT, "");
+            if (legacy.length() > 0) selected.add(legacy);
+        }
+        return selected;
     }
 
     private void addBehaviourControls(LinearLayout behaviour) {
@@ -285,16 +426,52 @@ public class MainActivity extends Activity {
         behaviour.addView(stepLabel);
         SeekBar step = new SeekBar(this);
         step.setMax(24);
-        step.setProgress(prefs.getInt(Prefs.STEP, 5) - 1);
-        updateStepLabel(step.getProgress() + 1);
+        int savedPress = prefs.getInt(Prefs.PRESS_STEP, prefs.getInt(Prefs.STEP, 5));
+        step.setProgress(savedPress - 1);
+        updateStepLabel(savedPress);
         step.setOnSeekBarChangeListener(new SimpleSeekListener() {
             @Override public void onProgressChanged(SeekBar bar, int value, boolean fromUser) {
                 int percent = value + 1;
                 updateStepLabel(percent);
-                if (fromUser) prefs.edit().putInt(Prefs.STEP, percent).apply();
+                if (fromUser) {
+                    SharedPreferences.Editor edit = prefs.edit().putInt(Prefs.PRESS_STEP, percent).putInt(Prefs.STEP, percent);
+                    if (prefs.getBoolean(Prefs.LINK_HOLD_STEP, true)) edit.putInt(Prefs.HOLD_STEP, percent);
+                    edit.apply();
+                }
             }
         });
         behaviour.addView(step);
+
+        Switch linkHold = new Switch(this);
+        linkHold.setText("Link hold step to press step");
+        linkHold.setTextSize(13);
+        linkHold.setChecked(prefs.getBoolean(Prefs.LINK_HOLD_STEP, true));
+        behaviour.addView(linkHold, margins(0, 0, 0, 0));
+        TextView holdLabel = text("Hold: " + prefs.getInt(Prefs.HOLD_STEP, savedPress) + "% per repeat", 14, true);
+        behaviour.addView(holdLabel);
+        SeekBar hold = new SeekBar(this);
+        hold.setMax(24);
+        int savedHold = prefs.getInt(Prefs.HOLD_STEP, savedPress);
+        hold.setProgress(savedHold - 1);
+        hold.setEnabled(!linkHold.isChecked());
+        hold.setOnSeekBarChangeListener(new SimpleSeekListener() {
+            @Override public void onProgressChanged(SeekBar bar, int value, boolean fromUser) {
+                int percent = value + 1;
+                holdLabel.setText("Hold: " + percent + "% per repeat");
+                if (fromUser) prefs.edit().putInt(Prefs.HOLD_STEP, percent).apply();
+            }
+        });
+        behaviour.addView(hold);
+        linkHold.setOnCheckedChangeListener((button, checked) -> {
+            prefs.edit().putBoolean(Prefs.LINK_HOLD_STEP, checked)
+                    .putInt(Prefs.HOLD_STEP, checked ? prefs.getInt(Prefs.PRESS_STEP, savedPress) : prefs.getInt(Prefs.HOLD_STEP, savedHold)).apply();
+            hold.setEnabled(!checked);
+            if (checked) {
+                int value = prefs.getInt(Prefs.PRESS_STEP, savedPress);
+                hold.setProgress(value - 1);
+                holdLabel.setText("Hold: " + value + "% per repeat");
+            }
+        });
 
         behaviour.addView(section("Hold repeat speed"), margins(0, 8, 0, 0));
         repeatLabel = text("", 16, true);
@@ -331,8 +508,18 @@ public class MainActivity extends Activity {
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setMinimumHeight(dp(52));
-        TextView label = text(mappingLabel(title, currentKey), 14, true);
+        row.setMinimumHeight(dp(46));
+        GradientDrawable rowBackground = new GradientDrawable();
+        rowBackground.setColor(Color.argb(45, 190, 165, 235));
+        rowBackground.setCornerRadius(dp(8));
+        rowBackground.setStroke(dp(1), Color.argb(90, 190, 165, 235));
+        row.setBackground(rowBackground);
+        row.setPadding(dp(8), dp(1), dp(8), dp(1));
+        TextView label = text("", 14, true);
+        label.setTextSize(12);
+        label.setMaxLines(2);
+        label.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        label.setText(mappingLabel(title, currentKey));
         if (Prefs.MODIFIER.equals(preference)) modifierMappingLabel = label;
         if (Prefs.UP_KEY.equals(preference)) brighterMappingLabel = label;
         if (Prefs.DOWN_KEY.equals(preference)) dimmerMappingLabel = label;
@@ -342,8 +529,8 @@ public class MainActivity extends Activity {
         record.setOnClickListener(v ->
                 beginCapture(preference, label, title, allowsVolume));
         row.addView(record, new LinearLayout.LayoutParams(
-                dp(94), dp(44)));
-        parent.addView(row, matchMargins(0, 0, 0, 0));
+                dp(94), dp(38)));
+        parent.addView(row, matchMargins(0, 3, 0, 3));
     }
 
     private void beginCapture(String preference, TextView label, String title,
@@ -456,7 +643,10 @@ public class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
-        if (permissionStatus != null) updatePermissionStatus();
+        if (permissionStatus != null) {
+            updatePermissionStatus();
+            updateSetupButtons();
+        }
         if (enabledSwitch != null) {
             enabledSwitch.setChecked(prefs.getBoolean(Prefs.ENABLED, true));
         }
@@ -490,6 +680,7 @@ public class MainActivity extends Activity {
         boolean service = isAccessibilityServiceEnabled();
         String status;
         if (write && service) {
+            status = "";
             status = "✓ Ready — permissions enabled";
         } else if (!write && !service) {
             status = "○ Brightness and key detection needed";
@@ -500,6 +691,23 @@ public class MainActivity extends Activity {
         }
         permissionStatus.setText(status);
         permissionStatus.setTextColor(write && service ? Color.rgb(24, 110, 50) : Color.rgb(150, 80, 20));
+    }
+
+    private void updateSetupButtons() {
+        boolean write = Settings.System.canWrite(this);
+        boolean service = isAccessibilityServiceEnabled();
+        updateSetupButton(brightnessPermissionButton, "1. Brightness permission", write);
+        updateSetupButton(keyDetectionButton, "2. Key detection", service);
+    }
+
+    private void updateSetupButton(Button button, String label, boolean available) {
+        if (button == null) return;
+        button.setTextSize(12);
+        button.setText(available ? label + " - Enabled" : label + " - Needed");
+        button.setTextColor(themeColor(android.R.attr.textColorPrimary));
+        button.setBackgroundTintList(available
+                ? ColorStateList.valueOf(Color.rgb(70, 130, 75))
+                : ColorStateList.valueOf(Color.rgb(170, 115, 35)));
     }
 
     private boolean isAccessibilityServiceEnabled() {
@@ -582,7 +790,7 @@ public class MainActivity extends Activity {
         if (rootStatus == null) return;
         rootStatus.setText(enabled
                 ? "Root active — hold your modifier and move the selected control up/down."
-                : "Optional; existing mappings still work without root.");
+                : "Root optional; regular mappings work without it.");
     }
 
     private void setChildrenEnabled(ViewGroup group, boolean enabled) {
@@ -596,15 +804,22 @@ public class MainActivity extends Activity {
                 .replace("BUTTON_", "").replace('_', ' ');
     }
 
-    private String mappingLabel(String title, int fallbackKey) {
+    private CharSequence mappingLabel(String title, int fallbackKey) {
+        String assigned;
         if (!prefs.getBoolean(Prefs.ROOT_AXES, false)
                 || (!"Brighter".equals(title) && !"Dimmer".equals(title))) {
-            return title + ": " + keyName(fallbackKey);
+            assigned = keyName(fallbackKey);
+        } else {
+            int source = prefs.getInt(Prefs.AXIS_SOURCE, Prefs.AXIS_DPAD);
+            String control = source == Prefs.AXIS_RIGHT_STICK ? "R stick"
+                    : source == Prefs.AXIS_LEFT_STICK ? "L stick" : "D-pad";
+            assigned = control + ("Brighter".equals(title) ? " Up (root)" : " Down (root)");
         }
-        int source = prefs.getInt(Prefs.AXIS_SOURCE, Prefs.AXIS_DPAD);
-        String control = source == Prefs.AXIS_RIGHT_STICK ? "R stick"
-                : source == Prefs.AXIS_LEFT_STICK ? "L stick" : "D-pad";
-        return title + ": " + control + ("Brighter".equals(title) ? " Up (root)" : " Down (root)");
+        String full = title + "\n" + assigned;
+        SpannableString styled = new SpannableString(full);
+        styled.setSpan(new BackgroundColorSpan(Color.rgb(95, 75, 125)),
+                full.length() - assigned.length(), full.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        return styled;
     }
 
     private void updateRootMappingLabels() {
@@ -699,7 +914,7 @@ public class MainActivity extends Activity {
     private LinearLayout card() {
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
-        card.setPadding(dp(14), dp(6), dp(14), dp(12));
+        card.setPadding(dp(14), dp(4), dp(14), dp(8));
         boolean dark = (getResources().getConfiguration().uiMode
                 & Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES;
         GradientDrawable background = new GradientDrawable();

@@ -9,6 +9,9 @@ final class Prefs {
     static final String ENABLED = "enabled";
     static final String MODIFIER = "modifier_key";
     static final String STEP = "step";
+    static final String PRESS_STEP = "press_step";
+    static final String HOLD_STEP = "hold_step";
+    static final String LINK_HOLD_STEP = "link_hold_step";
     static final String REPEAT_DELAY = "repeat_delay";
     static final String CONSUME_MODIFIER = "consume_modifier";
     static final String CAPTURING = "capturing";
@@ -21,6 +24,10 @@ final class Prefs {
     static final String ROOT_LIMIT_ACK = "root_limit_ack";
     static final String SETUP_GUIDE_SHOWN = "setup_guide_shown";
     static final String AWAITING_STEP_TWO = "awaiting_step_two";
+    static final String SUSPEND_SERVICE = "suspend_service";
+    static final String SUSPEND_SERVICE_COMPONENT = "suspend_service_component";
+    static final String SUSPEND_SERVICE_ACTIVE = "suspend_service_active";
+    static final String SUSPEND_SERVICE_COMPONENTS = "suspend_service_components";
 
     static final int AXIS_DPAD = 0;
     static final int AXIS_RIGHT_STICK = 1;

@@ -103,6 +103,22 @@ the project.
 
 - Initial public release.
 
+### v1.1
+
+The main focus of this update is handling conflicts with other controller-related
+apps. If another app responds to the same buttons, brightness and volume could
+change at the same time. Thor's Lightning can now temporarily suspend multiple
+selected accessibility services while the modifier is held, then restore them
+afterward.
+
+Additional improvements:
+
+- Clearer button-mapping layout with the assigned control highlighted below its
+  function.
+- Amber **- Needed** and green **- Enabled** setup indicators.
+- Improved spacing, text wrapping, and button sizing to prevent clipped labels.
+- Separate brightness steps for individual presses and repeated holds.
+
 ## License
 
 Thor's Lightning's original source and icon are available under the

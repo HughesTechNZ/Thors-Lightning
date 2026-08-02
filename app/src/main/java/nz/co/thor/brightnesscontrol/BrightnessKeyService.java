@@ -34,7 +34,9 @@ public class BrightnessKeyService extends AccessibilityService {
         @Override
         public void run() {
             if (modifierDown && activeDirection != 0 && isRemappingEnabled()) {
-                adjustBrightness(activeDirection);
+                int holdStep = Prefs.get(BrightnessKeyService.this).getInt(Prefs.HOLD_STEP,
+                        Prefs.get(BrightnessKeyService.this).getInt(Prefs.STEP, 5));
+                adjustBrightness(activeDirection, holdStep);
                 handler.postDelayed(this, repeatDelay());
             }
         }
@@ -57,6 +59,8 @@ public class BrightnessKeyService extends AccessibilityService {
 
         if (keyCode == modifier) {
             modifierDown = down;
+            if (down) suspendConflictingService();
+            else restoreConflictingService();
             if (!down) {
                 stopRepeating();
             }
@@ -71,7 +75,11 @@ public class BrightnessKeyService extends AccessibilityService {
             return false;
         }
 
-        if (!modifierDown || !isRemappingEnabled() || !isScreenInteractive()) {
+        boolean enabled = isRemappingEnabled();
+        if (!modifierDown || !enabled || !isScreenInteractive()) {
+            // Leave ordinary volume presses alone so other volume-control apps
+            // can continue to receive them. Volume is consumed only when the
+            // modifier is held and this service is actively remapping it.
             return false;
         }
 
@@ -83,7 +91,9 @@ public class BrightnessKeyService extends AccessibilityService {
         if (down) {
             int direction = keyCode == upKey ? 1 : -1;
             if (event.getRepeatCount() == 0) {
-                adjustBrightness(direction);
+                int pressStep = Prefs.get(this).getInt(Prefs.PRESS_STEP,
+                        Prefs.get(this).getInt(Prefs.STEP, 5));
+                adjustBrightness(direction, pressStep);
                 activeDirection = direction;
                 handler.removeCallbacks(repeater);
                 handler.postDelayed(repeater, 450);
@@ -98,6 +108,7 @@ public class BrightnessKeyService extends AccessibilityService {
     @Override
     protected void onServiceConnected() {
         super.onServiceConnected();
+        restoreConflictingService();
         rootInput = new RootInputMonitor(handler, new RootInputMonitor.Listener() {
             @Override public void onDirection(int direction) {
                 handleRootDirection(direction);
@@ -131,7 +142,9 @@ public class BrightnessKeyService extends AccessibilityService {
         if (direction == 0) {
             stopRepeating();
         } else if (activeDirection != direction) {
-            adjustBrightness(direction);
+            int pressStep = Prefs.get(this).getInt(Prefs.PRESS_STEP,
+                    Prefs.get(this).getInt(Prefs.STEP, 5));
+            adjustBrightness(direction, pressStep);
             activeDirection = direction;
             handler.removeCallbacks(repeater);
             handler.postDelayed(repeater, 450);
@@ -151,7 +164,7 @@ public class BrightnessKeyService extends AccessibilityService {
         return Prefs.get(this).getInt(Prefs.REPEAT_DELAY, 180);
     }
 
-    private void adjustBrightness(int direction) {
+    private void adjustBrightness(int direction, int stepPercent) {
         if (!Settings.System.canWrite(this)) {
             Toast.makeText(this, "Allow Modify system settings for Thor’s Lightning", Toast.LENGTH_LONG).show();
             stopRepeating();
@@ -159,7 +172,6 @@ public class BrightnessKeyService extends AccessibilityService {
         }
 
         try {
-            int stepPercent = Prefs.get(this).getInt(Prefs.STEP, 5);
             int target = Prefs.get(this).getInt(Prefs.TARGET, Prefs.TARGET_BOTH);
 
             if (target == Prefs.TARGET_BOTH || target == Prefs.TARGET_TOP) {
@@ -240,6 +252,7 @@ public class BrightnessKeyService extends AccessibilityService {
 
     @Override
     public void onInterrupt() {
+        restoreConflictingService();
         modifierDown = false;
         volumeUpDown = false;
         volumeDownDown = false;
@@ -248,10 +261,41 @@ public class BrightnessKeyService extends AccessibilityService {
 
     @Override
     public void onDestroy() {
+        restoreConflictingService();
         handler.removeCallbacksAndMessages(null);
         Prefs.get(this).unregisterOnSharedPreferenceChangeListener(rootPreferenceListener);
         if (rootInput != null) rootInput.stop();
         displayExecutor.shutdownNow();
         super.onDestroy();
+    }
+
+    private void suspendConflictingService() {
+        SharedPreferences p = Prefs.get(this);
+        if (!p.getBoolean(Prefs.SUSPEND_SERVICE, false)) return;
+        java.util.Set<String> components = selectedServices(p);
+        if (!components.isEmpty() && RootAccessibilityController.setSuspended(this, components, true)) {
+            p.edit().putBoolean(Prefs.SUSPEND_SERVICE_ACTIVE, true).apply();
+        }
+    }
+
+    private void restoreConflictingService() {
+        SharedPreferences p = Prefs.get(this);
+        if (!p.getBoolean(Prefs.SUSPEND_SERVICE_ACTIVE, false)) return;
+        java.util.Set<String> components = selectedServices(p);
+        if (!components.isEmpty()) {
+            if (RootAccessibilityController.setSuspended(this, components, false)) {
+                p.edit().putBoolean(Prefs.SUSPEND_SERVICE_ACTIVE, false).apply();
+            }
+        }
+    }
+
+    private java.util.Set<String> selectedServices(SharedPreferences p) {
+        java.util.Set<String> selected = new java.util.HashSet<>(p.getStringSet(
+                Prefs.SUSPEND_SERVICE_COMPONENTS, java.util.Collections.emptySet()));
+        if (selected.isEmpty()) {
+            String legacy = p.getString(Prefs.SUSPEND_SERVICE_COMPONENT, "");
+            if (legacy.length() > 0) selected.add(legacy);
+        }
+        return selected;
     }
 }
