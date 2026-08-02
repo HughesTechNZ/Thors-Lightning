@@ -24,10 +24,16 @@ final class Prefs {
     static final String ROOT_LIMIT_ACK = "root_limit_ack";
     static final String SETUP_GUIDE_SHOWN = "setup_guide_shown";
     static final String AWAITING_STEP_TWO = "awaiting_step_two";
+    static final String BRIGHTNESS_GUIDE_SHOWN = "brightness_guide_shown";
+    static final String KEY_GUIDE_SHOWN = "key_guide_shown";
+    static final String ADVANCE_TO_KEY_PENDING = "advance_to_key_pending";
+    static final String ADVANCE_TO_BRIGHTNESS_PENDING = "advance_to_brightness_pending";
+    static final String SETUP_COMPLETE_SHOWN = "setup_complete_shown";
     static final String SUSPEND_SERVICE = "suspend_service";
     static final String SUSPEND_SERVICE_COMPONENT = "suspend_service_component";
     static final String SUSPEND_SERVICE_ACTIVE = "suspend_service_active";
     static final String SUSPEND_SERVICE_COMPONENTS = "suspend_service_components";
+    static final String SUSPEND_SERVICE_IGNORED = "suspend_service_ignored";
 
     static final int AXIS_DPAD = 0;
     static final int AXIS_RIGHT_STICK = 1;

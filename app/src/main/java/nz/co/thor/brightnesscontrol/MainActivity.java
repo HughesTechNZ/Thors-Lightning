@@ -50,6 +50,9 @@ public class MainActivity extends Activity {
     private TextView safetyLabel;
     private Button brightnessPermissionButton;
     private Button keyDetectionButton;
+    private TextView brightnessStatus;
+    private TextView keyStatus;
+    private Switch suspendServicesSwitch;
     private Button checkRootButton;
     private boolean rootCheckRunning;
     private RadioGroup axisSources;
@@ -86,8 +89,8 @@ public class MainActivity extends Activity {
         header.setGravity(Gravity.CENTER_VERTICAL);
         LinearLayout heading = new LinearLayout(this);
         heading.setOrientation(LinearLayout.VERTICAL);
-        TextView title = text("Thor’s Lightning ⚡ " + appVersionName()
-                + " · Dual-Screen Brightness Control", 22, true);
+        TextView title = text("Thor's Lightning \u26A1 " + appVersionName()
+                + " - Controller-Based Brightness Control", 22, true);
         heading.addView(title);
         header.addView(heading, new LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
@@ -119,24 +122,75 @@ public class MainActivity extends Activity {
         permissionStatus = text("", 14, true);
         permissionStatus.setVisibility(View.GONE);
         setup.addView(permissionStatus, margins(0, 2, 0, 2));
-        TextView setupHint = text("Tap each button to enable the required permission.", 11, false);
+        TextView setupHint = text("Tap once to complete both required permissions.", 11, false);
         setupHint.setTextColor(themeColor(android.R.attr.textColorSecondary));
         setup.addView(setupHint, margins(0, 0, 0, 3));
 
-        brightnessPermissionButton = button("1. Brightness permission");
+        brightnessPermissionButton = button("Set up permissions");
         styleSetupButton(brightnessPermissionButton);
+        brightnessPermissionButton.setGravity(Gravity.CENTER);
+        brightnessPermissionButton.setTextSize(16);
         brightnessPermissionButton.setOnClickListener(v -> {
-            Intent intent = new Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS,
-                    Uri.parse("package:" + getPackageName()));
-            startActivity(intent);
+            if (Settings.System.canWrite(this) && isAccessibilityServiceEnabled()) {
+                AlertDialog complete = new AlertDialog.Builder(this)
+                        .setCustomTitle(centeredDialogTitle("Everything is set!"))
+                        .setMessage("Both permissions are enabled.\n\nYou can open either of the Android settings pages if you want to review or turn them off.")
+                        .setNegativeButton("Accessibility settings", (dialog, which) -> openKeyDetection())
+                        .setNeutralButton("Brightness settings", (dialog, which) -> openBrightnessPermission())
+                        .setPositiveButton("Got it", null)
+                        .create();
+                complete.setOnShowListener(dialog -> {
+                    View accessibility = complete.findViewById(android.R.id.button2);
+                    if (accessibility != null) accessibility.setTranslationX(-dp(30));
+                });
+                complete.show();
+                return;
+            }
+            if (Settings.System.canWrite(this) && !isAccessibilityServiceEnabled()) {
+                showKeyTransitionPrompt();
+                return;
+            }
+            if (!prefs.getBoolean(Prefs.BRIGHTNESS_GUIDE_SHOWN, false)) {
+                new AlertDialog.Builder(this)
+                        .setCustomTitle(centeredDialogTitle("Brightness permissions"))
+                        .setMessage("Press \"CONTINUE\" to open Android settings.\n\nThen enable the \"Allow modifying system settings\" toggle for Thor's Lightning.\n\nPress the Thor's \"B\" button or the Android Back button to return here.")
+                        .setPositiveButton("CONTINUE", (dialog, which) -> {
+                            prefs.edit().putBoolean(Prefs.BRIGHTNESS_GUIDE_SHOWN, true).apply();
+                            prefs.edit().putBoolean(Prefs.ADVANCE_TO_KEY_PENDING, true).apply();
+                            openBrightnessPermission();
+                        }).setNegativeButton("Cancel", null).show();
+                return;
+            }
+            openBrightnessPermission();
         });
         setup.addView(brightnessPermissionButton, matchMargins(0, 0, 0, -4));
 
         keyDetectionButton = button("2. Key detection");
         styleSetupButton(keyDetectionButton);
-        keyDetectionButton.setOnClickListener(v ->
-                startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
+        keyDetectionButton.setOnClickListener(v -> {
+            if (!prefs.getBoolean(Prefs.KEY_GUIDE_SHOWN, false)) {
+                new AlertDialog.Builder(this)
+                        .setCustomTitle(centeredDialogTitle("Key detection"))
+                        .setMessage("Press \"Continue\" to open Android settings. Open \"Downloaded apps\", select \"Thor's Lightning controls\", toggle it on, then tap \"Allow\" and return here.")
+                        .setPositiveButton("Continue", (dialog, which) -> {
+                            prefs.edit().putBoolean(Prefs.KEY_GUIDE_SHOWN, true).apply();
+                            prefs.edit().putBoolean(Prefs.ADVANCE_TO_KEY_PENDING, false)
+                                    .putBoolean(Prefs.ADVANCE_TO_BRIGHTNESS_PENDING, true).apply();
+                            openKeyDetection();
+                        }).setNegativeButton("Cancel", null).show();
+                return;
+            }
+            prefs.edit().putBoolean(Prefs.ADVANCE_TO_BRIGHTNESS_PENDING, true).apply();
+            openKeyDetection();
+        });
         setup.addView(keyDetectionButton, matchMargins(0, 0, 0, 0));
+        keyDetectionButton.setVisibility(View.GONE);
+        brightnessStatus = text("", 13, false);
+        keyStatus = text("", 13, false);
+        brightnessStatus.setText("Brightness permissions needed");
+        keyStatus.setText("Key detection needed");
+        setup.addView(brightnessStatus, margins(0, 1, 0, 0));
+        setup.addView(keyStatus, margins(0, 0, 0, 2));
 
         addRootControls(setup);
 
@@ -161,7 +215,6 @@ public class MainActivity extends Activity {
         CheckBox consume = new CheckBox(this);
         consume.setText("Reserve modifier button");
         consume.setTextSize(14);
-        consume.setTranslationX(-dp(8));
         consume.setChecked(prefs.getBoolean(Prefs.CONSUME_MODIFIER, false));
         consume.setOnCheckedChangeListener((button, checked) -> {
             if (!checked) {
@@ -194,7 +247,13 @@ public class MainActivity extends Activity {
     }
 
     private void addRootControls(LinearLayout parent) {
-        parent.addView(section("Root axis input"), margins(0, 2, 0, 0));
+        parent.addView(section("Root options"), margins(0, 2, 0, 0));
+        rootStatus = text("Root access is optional for regular button mappings.", 12, false);
+        rootStatus.setTextColor(themeColor(android.R.attr.textColorSecondary));
+        parent.addView(rootStatus, margins(0, 0, 0, 1));
+        Button rootCheckFirst = button("Check root access");
+        rootCheckFirst.setOnClickListener(v -> checkRootAccess(rootCheckFirst));
+        parent.addView(rootCheckFirst, matchMargins(0, 1, 0, -4));
         Switch rootAxes = new Switch(this);
         rootAxes.setText("Enable D-pad / Joystick");
         rootAxes.setTextSize(14);
@@ -233,43 +292,19 @@ public class MainActivity extends Activity {
             }
         });
 
-        rootStatus = text("", 12, false);
-        rootStatus.setTextColor(themeColor(android.R.attr.textColorSecondary));
-        parent.addView(rootStatus, margins(0, 1, 0, 2));
-
         checkRootButton = button("Check root access");
         Button checkRoot = checkRootButton;
-        checkRoot.setOnClickListener(v -> {
-            checkRoot.setEnabled(false);
-            rootStatus.setText("Root optional; regular mappings work without it.\nChecking root access…");
-            new Thread(() -> {
-                boolean available = hasRootAccess();
-                runOnUiThread(() -> {
-                    checkRoot.setEnabled(true);
-                    if (available) {
-                        checkRoot.setText("Check root access - Available");
-                        checkRoot.setTextColor(themeColor(android.R.attr.textColorPrimary));
-                        checkRoot.setBackgroundTintList(ColorStateList.valueOf(Color.rgb(70, 130, 75)));
-                    } else {
-                        checkRoot.setText("Check root access");
-                        checkRoot.setTextColor(themeColor(android.R.attr.textColorPrimary));
-                        checkRoot.setBackgroundTintList(null);
-                    }
-                    rootStatus.setText(available
-                            ? "Root optional; regular mappings work without it."
-                            : "Root optional; regular mappings work without it.\n○ Root unavailable or permission denied");
-                    rootStatus.setTextColor(themeColor(android.R.attr.textColorSecondary));
-                });
-            }, "ThorRootCheck").start();
-        });
+        checkRoot.setOnClickListener(v -> checkRootAccess(checkRoot));
         parent.addView(checkRoot, matchMargins(0, 1, 0, -4));
+        checkRoot.setVisibility(View.GONE);
 
         Switch suspend = new Switch(this);
+        suspendServicesSwitch = suspend;
         suspend.setText("Suspend services during hold");
         suspend.setTextSize(14);
         suspend.setChecked(prefs.getBoolean(Prefs.SUSPEND_SERVICE, false));
-        parent.addView(suspend, margins(0, 1, 0, 0));
-        TextView suspendHint = text("Root required; restores on release.", 11, false);
+        parent.addView(suspend, margins(0, 4, 0, 0));
+        TextView suspendHint = text("Root required; restores on release. Auto-enabled for known conflicts when root is enabled.", 11, false);
         suspendHint.setTextColor(themeColor(android.R.attr.textColorSecondary));
         parent.addView(suspendHint, margins(0, 1, 0, 2));
         Button chooseService = button("Choose services");
@@ -292,6 +327,7 @@ public class MainActivity extends Activity {
                 return;
             }
             prefs.edit().putBoolean(Prefs.ROOT_AXES, checked).apply();
+            if (checked) autoConfigureVolumeLinkSuspension();
             setChildrenEnabled(axisSources, checked);
             updateRootStatus(checked);
             updateRootMappingLabels();
@@ -299,7 +335,7 @@ public class MainActivity extends Activity {
             if (checked && !prefs.getBoolean(Prefs.ROOT_LIMIT_ACK, false)) {
                 new AlertDialog.Builder(this)
                         .setTitle("Root input limitation")
-                        .setMessage("Root mode can read D-pad and stick directions, but cannot hide those axis movements from games. The Thor’s L2/R2 triggers also report analog axes, so a game may still detect a reserved trigger.")
+                        .setMessage("Root mode can read D-pad and stick directions, but games may still see those movements. The Thor L2/R2 triggers also report analog axes.")
                         .setPositiveButton("Continue", (dialog, which) ->
                                 prefs.edit().putBoolean(Prefs.ROOT_LIMIT_ACK, true).apply())
                         .setNegativeButton("Cancel", (dialog, which) ->
@@ -309,6 +345,46 @@ public class MainActivity extends Activity {
             }
         });
         updateRootStatus(rootAxes.isChecked());
+    }
+
+    private void checkRootAccess(Button button) {
+        button.setEnabled(false);
+        new Thread(() -> {
+            boolean available = hasRootAccess();
+            runOnUiThread(() -> {
+                button.setEnabled(true);
+                button.setText(available ? "Check root access - Enabled" : "Check root access");
+                button.setBackgroundTintList(available ? ColorStateList.valueOf(Color.rgb(70, 130, 75)) : null);
+                if (available) autoConfigureVolumeLinkSuspension();
+                if (rootStatus != null) rootStatus.setText(available
+                        ? "Root access is optional for regular button mappings."
+                        : "Root access is optional for regular button mappings.");
+            });
+        }, "ThorRootCheck").start();
+    }
+
+    private void openBrightnessPermission() {
+        Intent intent = new Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS,
+                Uri.parse("package:" + getPackageName()));
+        startActivity(intent);
+    }
+
+    private void openKeyDetection() {
+        startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS));
+    }
+
+    private void showKeyTransitionPrompt() {
+        new AlertDialog.Builder(this).setCustomTitle(centeredDialogTitle("Key detection"))
+                .setMessage("Press \"CONTINUE\" to open Android Accessibility settings.\n\nThen:\n- Scroll to \"Downloaded apps\".\n- Select \"Thor's Lightning controls\".\n- Toggle it on.\n- Tap \"Allow\" when Android asks.\n\nPress the Thor's \"B\" button or the Android Back button twice to return here.")
+                .setPositiveButton("CONTINUE", (d, w) -> openKeyDetection())
+                .setNegativeButton("Later", null).show();
+    }
+
+    private void showBrightnessTransitionPrompt() {
+        new AlertDialog.Builder(this).setCustomTitle(centeredDialogTitle("Brightness permissions"))
+                .setMessage("After pressing \"Continue\":\n\n- Then enable the \"Allow modifying system settings\" toggle for Thor's Lightning.\n- Press the Thor's \"B\" button or the Android Back button to return here.")
+                .setPositiveButton("Continue", (d, w) -> openBrightnessPermission())
+                .setNegativeButton("Later", null).show();
     }
 
     private void chooseSuspendedService() {
@@ -356,7 +432,12 @@ public class MainActivity extends Activity {
             boolean[] checked = new boolean[labels.length];
             for (int i = 0; i < labels.length; i++) checked[i] = selected.contains(labels[i]);
             new AlertDialog.Builder(this).setTitle("Choose services to suspend (" + selected.size() + " selected)")
-                    .setMultiChoiceItems(labels, checked, (dialog, which, isChecked) -> { if (isChecked) selected.add(ids.get(which)); else selected.remove(ids.get(which)); })
+                    .setMultiChoiceItems(labels, checked, (dialog, which, isChecked) -> {
+                        java.util.Set<String> ignored = new java.util.HashSet<>(prefs.getStringSet(Prefs.SUSPEND_SERVICE_IGNORED, java.util.Collections.emptySet()));
+                        if (isChecked) { selected.add(ids.get(which)); ignored.remove(ids.get(which)); }
+                        else { selected.remove(ids.get(which)); ignored.add(ids.get(which)); }
+                        prefs.edit().putStringSet(Prefs.SUSPEND_SERVICE_IGNORED, ignored).apply();
+                    })
                     .setNegativeButton("Cancel", null)
                     .setPositiveButton("Save", (dialog, which) -> prefs.edit().putStringSet(Prefs.SUSPEND_SERVICE_COMPONENTS, selected).apply())
                     .show();
@@ -373,8 +454,10 @@ public class MainActivity extends Activity {
         AlertDialog.Builder builder = new AlertDialog.Builder(this)
                 .setTitle("Choose services to suspend")
                 .setMultiChoiceItems(labels, checked, (dialog, which, isChecked) -> {
-                    if (isChecked) selected.add(services.get(which).getId());
-                    else selected.remove(services.get(which).getId());
+                    java.util.Set<String> ignored = new java.util.HashSet<>(prefs.getStringSet(Prefs.SUSPEND_SERVICE_IGNORED, java.util.Collections.emptySet()));
+                    if (isChecked) { selected.add(services.get(which).getId()); ignored.remove(services.get(which).getId()); }
+                    else { selected.remove(services.get(which).getId()); ignored.add(services.get(which).getId()); }
+                    prefs.edit().putStringSet(Prefs.SUSPEND_SERVICE_IGNORED, ignored).apply();
                     ((AlertDialog) dialog).setTitle("Choose services to suspend (" + selected.size() + " selected)");
                 }).setNegativeButton("Cancel", null)
                 .setPositiveButton("Save", (dialog, which) -> prefs.edit()
@@ -526,10 +609,15 @@ public class MainActivity extends Activity {
         row.addView(label, new LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         Button record = button("Record");
+        record.setTextSize(16);
+        record.setGravity(Gravity.CENTER);
+        record.setPadding(0, 0, 0, 0);
+        record.setIncludeFontPadding(false);
         record.setOnClickListener(v ->
                 beginCapture(preference, label, title, allowsVolume));
-        row.addView(record, new LinearLayout.LayoutParams(
-                dp(94), dp(38)));
+        LinearLayout.LayoutParams recordParams = new LinearLayout.LayoutParams(dp(94), dp(38));
+        recordParams.gravity = Gravity.CENTER_VERTICAL;
+        row.addView(record, recordParams);
         parent.addView(row, matchMargins(0, 3, 0, 3));
     }
 
@@ -541,7 +629,7 @@ public class MainActivity extends Activity {
         captureTitle = title;
         captureAllowsVolume = allowsVolume;
         prefs.edit().putBoolean(Prefs.CAPTURING, true).apply();
-        captureMessage.setText("Listening for " + title + "… Back cancels.");
+        captureMessage.setText("Listening for " + title + "... Back cancels.");
         captureMessage.setTextColor(themeColor(android.R.attr.colorAccent));
     }
 
@@ -647,6 +735,24 @@ public class MainActivity extends Activity {
             updatePermissionStatus();
             updateSetupButtons();
         }
+        if (prefs.getBoolean(Prefs.ADVANCE_TO_KEY_PENDING, false)
+                && Settings.System.canWrite(this)) {
+            prefs.edit().putBoolean(Prefs.ADVANCE_TO_KEY_PENDING, false).apply();
+            if (!isAccessibilityServiceEnabled()) showKeyTransitionPrompt();
+        }
+        if (prefs.getBoolean(Prefs.ADVANCE_TO_BRIGHTNESS_PENDING, false)
+                && isAccessibilityServiceEnabled()) {
+            prefs.edit().putBoolean(Prefs.ADVANCE_TO_BRIGHTNESS_PENDING, false).apply();
+            if (!Settings.System.canWrite(this)) showBrightnessTransitionPrompt();
+        }
+        if (Settings.System.canWrite(this) && isAccessibilityServiceEnabled()
+                && !prefs.getBoolean(Prefs.SETUP_COMPLETE_SHOWN, false)) {
+            prefs.edit().putBoolean(Prefs.SETUP_COMPLETE_SHOWN, true).apply();
+            new AlertDialog.Builder(this)
+                    .setCustomTitle(centeredDialogTitle("\u26A1 Setup Complete! \u26A1"))
+                    .setMessage("Brightness control is ready.\n\nRoot access is required if you want to use the D-pad or analogue sticks. To do this, follow the steps below:\n\n- Tap \"Check root access\".\n- Allow root access when Android asks.\n- Turn on \"Enable D-pad / Joystick\".\n- Choose D-pad, L-stick, or R-stick under the root options.\n\nNote: These control options support up and down directions only.")
+                    .setPositiveButton("Got it", null).show();
+        }
         if (enabledSwitch != null) {
             enabledSwitch.setChecked(prefs.getBoolean(Prefs.ENABLED, true));
         }
@@ -654,6 +760,29 @@ public class MainActivity extends Activity {
                 && Settings.System.canWrite(this) && !isAccessibilityServiceEnabled()) {
             prefs.edit().putBoolean(Prefs.AWAITING_STEP_TWO, false).apply();
             showStepTwoGuide();
+        }
+    }
+
+    private void autoConfigureVolumeLinkSuspension() {
+        String enabled = Settings.Secure.getString(getContentResolver(),
+                Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES);
+        if (enabled == null) return;
+        java.util.Set<String> matches = new java.util.HashSet<>();
+        for (String id : enabled.split(":")) {
+            String lower = id.toLowerCase(java.util.Locale.ROOT);
+            if (!id.startsWith(getPackageName() + "/")
+                    && !prefs.getStringSet(Prefs.SUSPEND_SERVICE_IGNORED, java.util.Collections.emptySet()).contains(id)
+                    && (lower.contains("thorvolume") || lower.contains("volumecontrol"))) {
+                matches.add(id);
+            }
+        }
+        if (!matches.isEmpty()) {
+            java.util.Set<String> selected = selectedSuspendServices();
+            selected.addAll(matches);
+            prefs.edit().putStringSet(Prefs.SUSPEND_SERVICE_COMPONENTS, selected)
+                    .putString(Prefs.SUSPEND_SERVICE_COMPONENT, selected.iterator().next())
+                    .putBoolean(Prefs.SUSPEND_SERVICE, true).apply();
+            if (suspendServicesSwitch != null) suspendServicesSwitch.setChecked(true);
         }
     }
 
@@ -681,13 +810,13 @@ public class MainActivity extends Activity {
         String status;
         if (write && service) {
             status = "";
-            status = "✓ Ready — permissions enabled";
+            status = "Ready - permissions enabled";
         } else if (!write && !service) {
-            status = "○ Brightness and key detection needed";
+            status = "Brightness and key detection needed";
         } else if (!write) {
-            status = "○ Brightness permission needed";
+            status = "Brightness permission needed";
         } else {
-            status = "○ Key detection needed";
+            status = "Key detection needed";
         }
         permissionStatus.setText(status);
         permissionStatus.setTextColor(write && service ? Color.rgb(24, 110, 50) : Color.rgb(150, 80, 20));
@@ -696,13 +825,19 @@ public class MainActivity extends Activity {
     private void updateSetupButtons() {
         boolean write = Settings.System.canWrite(this);
         boolean service = isAccessibilityServiceEnabled();
-        updateSetupButton(brightnessPermissionButton, "1. Brightness permission", write);
-        updateSetupButton(keyDetectionButton, "2. Key detection", service);
+        updateSetupButton(brightnessPermissionButton, "Set up permissions", write && service);
+        brightnessPermissionButton.setText("Set up permissions");
+        if (brightnessStatus != null) {
+            brightnessStatus.setText("Brightness permission - " + (write ? "Enabled" : "Needed"));
+            keyStatus.setText("Key detection - " + (service ? "Enabled" : "Needed"));
+            brightnessStatus.setTextColor(write ? Color.rgb(70, 150, 75) : Color.rgb(190, 130, 35));
+            keyStatus.setTextColor(service ? Color.rgb(70, 150, 75) : Color.rgb(190, 130, 35));
+        }
     }
 
     private void updateSetupButton(Button button, String label, boolean available) {
         if (button == null) return;
-        button.setTextSize(12);
+        button.setTextSize(16);
         button.setText(available ? label + " - Enabled" : label + " - Needed");
         button.setTextColor(themeColor(android.R.attr.textColorPrimary));
         button.setBackgroundTintList(available
@@ -730,30 +865,17 @@ public class MainActivity extends Activity {
             return;
         }
         new AlertDialog.Builder(this)
-                .setTitle("Two-step setup")
-                .setMessage("Step 1 — Brightness permission\n"
-                        + "Android will open “Modify system settings”. Turn on “Allow modifying system settings” for Thor’s Lightning, then come back.\n\n"
-                        + "Step 2 — Key detection\n"
-                        + "Android will open Accessibility. Select Thor’s Lightning and enable it. The service reads controller-button presses only; it does not inspect screen content.")
-                .setPositiveButton("Start step 1", (dialog, which) -> {
-                    prefs.edit()
-                            .putBoolean(Prefs.SETUP_GUIDE_SHOWN, true)
-                            .putBoolean(Prefs.AWAITING_STEP_TWO, true)
-                            .apply();
-                    startActivity(new Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS,
-                            Uri.parse("package:" + getPackageName())));
-                })
-                .setNegativeButton("Later", (dialog, which) ->
+                .setCustomTitle(centeredDialogTitle("Welcome to Thor's Lightning! \u26A1"))
+                .setMessage("This app lets you use the AYN Thor's controller inputs to adjust the screen brightness!\n\nTo get started, tap \"Set up permissions\" to allow the app to function.")
+                .setPositiveButton("Got it", (dialog, which) ->
                         prefs.edit().putBoolean(Prefs.SETUP_GUIDE_SHOWN, true).apply())
                 .show();
     }
 
     private void showStepTwoGuide() {
         new AlertDialog.Builder(this)
-                .setTitle("Step 2 — Enable key detection")
-                .setMessage("Select Thor’s Lightning in Accessibility and turn it on. "
-                        + "This lets the app detect mapped controller buttons in the background. "
-                        + "It does not read or inspect screen content.")
+                .setCustomTitle(centeredDialogTitle("Step 2 - Enable key detection"))
+                .setMessage("Open \"Downloaded apps\", select \"Thor's Lightning controls\", toggle it on, then tap \"Allow\" when Android asks.")
                 .setPositiveButton("Open Accessibility", (dialog, which) ->
                         startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)))
                 .setNegativeButton("Later", null)
@@ -789,8 +911,8 @@ public class MainActivity extends Activity {
     private void updateRootStatus(boolean enabled) {
         if (rootStatus == null) return;
         rootStatus.setText(enabled
-                ? "Root active — hold your modifier and move the selected control up/down."
-                : "Root optional; regular mappings work without it.");
+                ? "Root active - hold your modifier and move the selected control up/down."
+                : "Root access is optional for regular button mappings.");
     }
 
     private void setChildrenEnabled(ViewGroup group, boolean enabled) {
@@ -893,7 +1015,16 @@ public class MainActivity extends Activity {
         Button button = new Button(this);
         button.setText(value);
         button.setAllCaps(false);
+        button.setTextSize(16);
         return button;
+    }
+
+    private TextView centeredDialogTitle(String value) {
+        TextView title = text(value, 20, false);
+        title.setGravity(Gravity.CENTER);
+        title.setTextAlignment(View.TEXT_ALIGNMENT_CENTER);
+        title.setPadding(dp(24), dp(16), dp(24), dp(8));
+        return title;
     }
 
     private void styleSetupButton(Button button) {
@@ -970,3 +1101,4 @@ public class MainActivity extends Activity {
         @Override public void onStopTrackingTouch(SeekBar seekBar) {}
     }
 }
+
