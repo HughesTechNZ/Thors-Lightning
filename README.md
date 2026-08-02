@@ -54,7 +54,7 @@ top/bottom brightness differences intact during normal adjustment.
 - AYN Thor running the compatible Android 13 firmware
 - Accessibility service enabled for Thor's Lightning
 - Android brightness write permission
-- Magisk root only if using D-pad or analog-stick mappings
+- Root access only if using D-pad or analog-stick mappings
 
 Root axis input has platform limits. D-pad and stick directions may still be
 visible to games, and analog sticks cannot physically send both directions on
@@ -72,7 +72,7 @@ input reservation matters.
 7. If another accessibility app responds to the same controller buttons,
    enable service suspension and select the services to pause during a
    modifier hold.
-8. Approve the Magisk root prompt if root input is enabled.
+8. Approve the root-access prompt from your installed root manager if root input is enabled.
 
 ## Building
 
