@@ -137,6 +137,10 @@ Additional improvements:
 
 - Improved root input detection so D-pad, L-stick, and R-stick directions are
   identified correctly when recording brightness controls.
+- Enabling **Enable D-pad / Joystick** turns on exclusive root-axis mode:
+  regular button and volume mappings are suppressed while D-pad or stick
+  brightness input is selected, preventing both paths from changing brightness
+  at the same time.
 - Root directional mappings now work for Bright and Dimmer controls, while
   directional inputs are kept out of the modifier role.
 - Added clearer recording safeguards when the required permissions are not yet
@@ -145,6 +149,8 @@ Additional improvements:
   the existing mapping cleanly.
 - Refined spacing, text wrapping, setup status, and root-options presentation
   for better readability on Thor's three-button navigation layout.
+- Enabled Android immersive mode to keep the navigation bar from interfering
+  with the app layout and avoid GUI rendering issues.
 
 ## License
 
