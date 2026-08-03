@@ -15,6 +15,7 @@ import java.util.concurrent.Executors;
 public class BrightnessKeyService extends AccessibilityService {
     private final Handler handler = new Handler(Looper.getMainLooper());
     private boolean modifierDown;
+    private boolean rootModifierDown;
     private boolean volumeUpDown;
     private boolean volumeDownDown;
     private int activeDirection;
@@ -25,7 +26,7 @@ public class BrightnessKeyService extends AccessibilityService {
     private int rootMonitorSource = -1;
     private final SharedPreferences.OnSharedPreferenceChangeListener rootPreferenceListener =
             (sharedPreferences, key) -> {
-                if (Prefs.ROOT_AXES.equals(key) || Prefs.AXIS_SOURCE.equals(key)) {
+                if (Prefs.ROOT_AXES.equals(key)) {
                     refreshRootMonitor(sharedPreferences);
                 }
             };
@@ -57,7 +58,7 @@ public class BrightnessKeyService extends AccessibilityService {
         boolean down = event.getAction() == KeyEvent.ACTION_DOWN;
         boolean reserveModifier = prefs.getBoolean(Prefs.CONSUME_MODIFIER, false);
 
-        if (keyCode == modifier) {
+        if (keyCode == modifier && !rootModifierMapped(prefs)) {
             modifierDown = down;
             if (down) suspendConflictingService();
             else restoreConflictingService();
@@ -67,11 +68,11 @@ public class BrightnessKeyService extends AccessibilityService {
             return isRemappingEnabled() && reserveModifier;
         }
 
-        // Root axis mode is an alternate input source. Do not also run the
-        // configured button mappings (including the default volume keys), or
-        // a volume press would still change brightness while D-pad/stick input
-        // is selected.
-        if (prefs.getBoolean(Prefs.ROOT_AXES, false)) {
+        // Once a root direction has been recorded, it becomes the active
+        // source. Do not also run the configured button mappings (including
+        // the default volume keys) at the same time.
+        if (prefs.getBoolean(Prefs.ROOT_AXES, false)
+                && rootDirectionsMapped(prefs)) {
             volumeUpDown = false;
             volumeDownDown = false;
             return false;
@@ -136,26 +137,57 @@ public class BrightnessKeyService extends AccessibilityService {
     private void refreshRootMonitor(SharedPreferences prefs) {
         if (rootInput == null) return;
         boolean enabled = prefs.getBoolean(Prefs.ROOT_AXES, false);
-        int source = prefs.getInt(Prefs.AXIS_SOURCE, Prefs.AXIS_DPAD);
-        if (enabled == rootMonitorEnabled && (!enabled || source == rootMonitorSource)) return;
+        if (enabled == rootMonitorEnabled) return;
         rootInput.stop();
         rootMonitorEnabled = enabled;
-        rootMonitorSource = source;
-        if (enabled) rootInput.start(source);
+        rootMonitorSource = enabled ? 0 : -1;
+        if (enabled) rootInput.start(0);
     }
 
-    private void handleRootDirection(int direction) {
+    private void handleRootDirection(int encoded) {
+        int source = encoded / 10;
+        int direction = encoded % 10;
+        SharedPreferences prefs = Prefs.get(this);
+        if (!prefs.getBoolean(Prefs.ROOT_AXES, false)) {
+            rootModifierDown = false;
+            modifierDown = false;
+            if (direction == 0) stopRepeating();
+            return;
+        }
+        if (rootModifierMapped(prefs)) {
+            boolean modifierMatch = source == prefs.getInt(Prefs.ROOT_MODIFIER_SOURCE, -1)
+                    && direction == prefs.getInt(Prefs.ROOT_MODIFIER_DIRECTION, 0);
+            if (modifierMatch && !rootModifierDown) {
+                rootModifierDown = true;
+                modifierDown = true;
+                suspendConflictingService();
+            } else if (direction == 0 && rootModifierDown) {
+                rootModifierDown = false;
+                modifierDown = false;
+                restoreConflictingService();
+                stopRepeating();
+            }
+        }
+        if (!rootDirectionsMapped(prefs)) return;
+        int brightnessDirection = source == prefs.getInt(Prefs.ROOT_BRIGHT_SOURCE, -1)
+                && direction == prefs.getInt(Prefs.ROOT_BRIGHT_DIRECTION, 0) ? 1
+                : source == prefs.getInt(Prefs.ROOT_DIM_SOURCE, -1)
+                && direction == prefs.getInt(Prefs.ROOT_DIM_DIRECTION, 0) ? -1 : 0;
+        if (brightnessDirection == 0) {
+            stopRepeating();
+            return;
+        }
         if (!modifierDown || !isRemappingEnabled() || !isScreenInteractive()) {
             if (direction == 0) stopRepeating();
             return;
         }
         if (direction == 0) {
             stopRepeating();
-        } else if (activeDirection != direction) {
+        } else if (activeDirection != brightnessDirection) {
             int pressStep = Prefs.get(this).getInt(Prefs.PRESS_STEP,
                     Prefs.get(this).getInt(Prefs.STEP, 5));
-            adjustBrightness(direction, pressStep);
-            activeDirection = direction;
+            adjustBrightness(brightnessDirection, pressStep);
+            activeDirection = brightnessDirection;
             handler.removeCallbacks(repeater);
             handler.postDelayed(repeater, 450);
         }
@@ -163,6 +195,17 @@ public class BrightnessKeyService extends AccessibilityService {
 
     private boolean isRemappingEnabled() {
         return Prefs.get(this).getBoolean(Prefs.ENABLED, true);
+    }
+
+    private boolean rootDirectionsMapped(SharedPreferences prefs) {
+        return prefs.getInt(Prefs.ROOT_BRIGHT_DIRECTION, 0) != 0
+                && prefs.getInt(Prefs.ROOT_DIM_DIRECTION, 0) != 0;
+    }
+
+    private boolean rootModifierMapped(SharedPreferences prefs) {
+        return prefs.getBoolean(Prefs.ROOT_AXES, false)
+                && prefs.getInt(Prefs.ROOT_MODIFIER_SOURCE, -1) >= 0
+                && prefs.getInt(Prefs.ROOT_MODIFIER_DIRECTION, 0) != 0;
     }
 
     private boolean isScreenInteractive() {

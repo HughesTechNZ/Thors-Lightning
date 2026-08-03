@@ -9,7 +9,7 @@ firmware.
 > Technologies Co., Ltd. AYN and Thor are used only to identify the compatible
 > device. All related trademarks belong to their respective owners.
 
-![Thor's Lightning dashboard](docs/dashboard-v1.1.png)
+![Thor's Lightning dashboard](docs/dashboard-v1.2.png)
 
 ## What it does
 
@@ -21,8 +21,9 @@ firmware.
   from standard Android controller buttons.
 - **Non-root volume support:** volume up and volume down work without root and
   are reserved while mapped for brightness.
-- **Optional root input support:** rooted devices can also use D-pad and
-  left/right analog-stick directions for Bright and Dimmer controls.
+- **Optional root input support:** rooted devices can record any D-pad or
+  analog-stick direction for Bright and Dimmer controls, including different
+  controls or directions for each function.
 - **Modifier reservation option:** root users can optionally reserve the
   modifier itself while brightness controls are held.
 - **Service conflict handling:** select multiple accessibility services to
@@ -69,7 +70,9 @@ input reservation matters.
 3. Follow the on-screen guide to allow **Modify system settings**, then enable
    **Thor's Lightning controls** under Android Accessibility. Return to the app
    after each settings page; the guide will take you to the next step.
-4. Choose the modifier, Bright, Dimmer, and screen-target options.
+4. Choose the modifier, Bright, Dimmer, and screen-target options. For root
+   input, tap a Bright or Dimmer **Record** button and move the direction you
+   want to assign; the app identifies the D-pad or stick automatically.
 5. Enable root input only if you want D-pad or analog-stick mappings, then
    approve the root-access prompt from your installed root manager.
 6. If another accessibility app responds to the same controller buttons, turn
@@ -129,6 +132,19 @@ Additional improvements:
 - Amber **- Needed** and green **- Enabled** setup indicators.
 - Improved spacing, text wrapping, and button sizing to prevent clipped labels.
 - Separate brightness steps for individual presses and repeated holds.
+
+### v1.2
+
+- Improved root input detection so D-pad, L-stick, and R-stick directions are
+  identified correctly when recording brightness controls.
+- Root directional mappings now work for Bright and Dimmer controls, while
+  directional inputs are kept out of the modifier role.
+- Added clearer recording safeguards when the required permissions are not yet
+  enabled, plus clearer guidance around root-input and reservation limits.
+- Improved duplicate mapping handling so assigning an already-used button swaps
+  the existing mapping cleanly.
+- Refined spacing, text wrapping, setup status, and root-options presentation
+  for better readability on Thor's three-button navigation layout.
 
 ## License
 

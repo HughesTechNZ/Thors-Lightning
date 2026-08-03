@@ -15,6 +15,8 @@ import android.content.res.ColorStateList;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.provider.Settings;
 import android.text.TextUtils;
 import android.text.SpannableString;
@@ -55,7 +57,6 @@ public class MainActivity extends Activity {
     private Switch suspendServicesSwitch;
     private Button checkRootButton;
     private boolean rootCheckRunning;
-    private RadioGroup axisSources;
     private Switch enabledSwitch;
     private final SharedPreferences.OnSharedPreferenceChangeListener preferenceListener =
             (sharedPreferences, key) -> {
@@ -67,22 +68,58 @@ public class MainActivity extends Activity {
                 }
             };
     private boolean capturing;
+    private boolean capturingRootDirection;
+    private RootInputMonitor rootDirectionRecorder;
     private String capturePreference;
     private String captureTitle;
     private boolean captureAllowsVolume;
+    private AlertDialog recordDialog;
+    private TextView recordDialogMessage;
+    private boolean recordDialogCompleted;
+    private final Handler recordCountdownHandler = new Handler(Looper.getMainLooper());
+    private Runnable recordCountdown;
 
     @Override
     protected void onCreate(Bundle state) {
         prefs = Prefs.get(this);
         prefs.edit().putInt(Prefs.THEME, Prefs.THEME_SYSTEM).apply();
+        // A crashed or force-stopped recording must not leave the service in
+        // capture mode on the next launch.
+        prefs.edit().putBoolean(Prefs.CAPTURING, false).apply();
         super.onCreate(state);
+        hideNavigationBar();
         migrateUnsupportedMappings();
         buildUi();
+        hideNavigationBar();
+    }
+
+    private void hideNavigationBar() {
+        getWindow().getDecorView().setSystemUiVisibility(
+                View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                        | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                        | View.SYSTEM_UI_FLAG_FULLSCREEN
+                        | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                        | View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus) hideNavigationBar();
     }
 
     private void buildUi() {
+        // Migrate any older directional modifier mapping now that root axes
+        // are brightness-only inputs.
+        if (prefs.getBoolean(Prefs.ROOT_AXES, false)
+                && isDpadKey(prefs.getInt(Prefs.MODIFIER, KeyEvent.KEYCODE_BUTTON_R1))) {
+            prefs.edit().putInt(Prefs.MODIFIER, KeyEvent.KEYCODE_BUTTON_R1)
+                    .remove(Prefs.ROOT_MODIFIER_SOURCE)
+                    .remove(Prefs.ROOT_MODIFIER_DIRECTION).apply();
+        }
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
+        // Let the cards use the available height down to the navigation bar.
         root.setPadding(dp(16), dp(2), dp(16), dp(14));
 
         LinearLayout header = new LinearLayout(this);
@@ -124,12 +161,13 @@ public class MainActivity extends Activity {
         setup.addView(permissionStatus, margins(0, 2, 0, 2));
         TextView setupHint = text("Tap once to complete both required permissions.", 11, false);
         setupHint.setTextColor(themeColor(android.R.attr.textColorSecondary));
-        setup.addView(setupHint, margins(0, 0, 0, 3));
+        setup.addView(setupHint, margins(0, 0, 0, 5));
 
         brightnessPermissionButton = button("Set up permissions");
         styleSetupButton(brightnessPermissionButton);
         brightnessPermissionButton.setGravity(Gravity.CENTER);
-        brightnessPermissionButton.setTextSize(16);
+        brightnessPermissionButton.setTextSize(14);
+        brightnessPermissionButton.setHeight(dp(40));
         brightnessPermissionButton.setOnClickListener(v -> {
             if (Settings.System.canWrite(this) && isAccessibilityServiceEnabled()) {
                 AlertDialog complete = new AlertDialog.Builder(this)
@@ -163,7 +201,7 @@ public class MainActivity extends Activity {
             }
             openBrightnessPermission();
         });
-        setup.addView(brightnessPermissionButton, matchMargins(0, 0, 0, -4));
+        setup.addView(brightnessPermissionButton, matchMargins(0, 0, 0, 3));
 
         keyDetectionButton = button("2. Key detection");
         styleSetupButton(keyDetectionButton);
@@ -189,13 +227,13 @@ public class MainActivity extends Activity {
         keyStatus = text("", 13, false);
         brightnessStatus.setText("Brightness permissions needed");
         keyStatus.setText("Key detection needed");
-        setup.addView(brightnessStatus, margins(0, 1, 0, 0));
-        setup.addView(keyStatus, margins(0, 0, 0, 2));
+        // Permission state is shown by the setup button; keep the card free
+        // of duplicate status lines so Root options can use the space.
 
         addRootControls(setup);
 
         mappings.addView(section("Button mappings"));
-        TextView mappingHint = text("Hold the modifier, then press Bright or Dimmer buttons.", 12, false);
+        TextView mappingHint = text("Tap Record, then press the control you want to assign. Hold the modifier, then use Brighter or Dimmer; rooted direction mappings are moved when prompted.", 12, false);
         mappingHint.setTextColor(themeColor(android.R.attr.textColorSecondary));
         mappings.addView(mappingHint, margins(0, 3, 0, 7));
         addMappingRow(mappings, "Modifier", Prefs.MODIFIER,
@@ -204,16 +242,22 @@ public class MainActivity extends Activity {
                 prefs.getInt(Prefs.UP_KEY, KeyEvent.KEYCODE_VOLUME_UP), true);
         addMappingRow(mappings, "Dimmer", Prefs.DOWN_KEY,
                 prefs.getInt(Prefs.DOWN_KEY, KeyEvent.KEYCODE_VOLUME_DOWN), true);
-        LinearLayout.LayoutParams axisRowParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        axisRowParams.setMargins(0, dp(6), 0, dp(1));
-        mappings.addView(axisSources, axisRowParams);
-        captureMessage = text("Use Volume, face, shoulder, stick-click, Start or Select buttons. D-pad and stick directions require root.", 12, false);
+        captureMessage = text("Use Volume, face, shoulder, stick-click, Start or Select. With root enabled, Record can capture D-pad or stick directions.", 12, false);
         captureMessage.setTextColor(themeColor(android.R.attr.textColorSecondary));
         mappings.addView(captureMessage, margins(0, 7, 0, 6));
 
+        LinearLayout reserveBox = new LinearLayout(this);
+        reserveBox.setOrientation(LinearLayout.VERTICAL);
+        reserveBox.setPadding(dp(8), dp(4), dp(8), dp(10));
+        GradientDrawable reserveBackground = new GradientDrawable();
+        reserveBackground.setColor(Color.argb(45, 190, 165, 235));
+        reserveBackground.setCornerRadius(dp(8));
+        reserveBackground.setStroke(dp(1), Color.argb(90, 190, 165, 235));
+        reserveBox.setBackground(reserveBackground);
+        mappings.addView(reserveBox, margins(0, 2, 0, 6));
+
         CheckBox consume = new CheckBox(this);
-        consume.setText("Reserve modifier button");
+        consume.setText("Reserve the modifier button");
         consume.setTextSize(14);
         consume.setChecked(prefs.getBoolean(Prefs.CONSUME_MODIFIER, false));
         consume.setOnCheckedChangeListener((button, checked) -> {
@@ -227,7 +271,7 @@ public class MainActivity extends Activity {
                     .setTitle("Reserve modifier button?")
                     .setMessage("This blocks whichever modifier you have selected from games whenever it is pressed "
                             + "(currently " + modifierName + "). If you remap the modifier, the newly selected button "
-                            + "will be blocked instead. Brighter and Dimmer buttons are already reserved only while the modifier is held.")
+                            + "will be blocked instead. Brighter and Dimmer buttons are already reserved only while the modifier is held. You have been warned.")
                     .setPositiveButton("Reserve", (dialog, which) ->
                             prefs.edit().putBoolean(Prefs.CONSUME_MODIFIER, true).apply())
                     .setNegativeButton("Cancel", (dialog, which) ->
@@ -235,67 +279,61 @@ public class MainActivity extends Activity {
                     .setOnCancelListener(dialog -> consume.setChecked(false))
                     .show();
         });
-        mappings.addView(consume, matchMargins(0, 0, 0, 0));
+        reserveBox.addView(consume, matchMargins(0, 0, 0, 0));
         TextView consumeHint = text(
-                "Mapped buttons reserve while held; this also reserves the modifier.",
-                11, false);
+                "Mapped Brighter and Dimmer buttons are reserved while held. If enabled, the Modifier button is also reserved (games do not receive these inputs when being pressed or held).",
+                10, false);
+        consumeHint.setIncludeFontPadding(false);
         consumeHint.setTextColor(themeColor(android.R.attr.textColorSecondary));
-        mappings.addView(consumeHint, margins(0, 0, 0, 2));
+        reserveBox.addView(consumeHint, margins(0, 0, 0, 0));
         addBehaviourControls(behaviour);
         setContentView(root);
         root.post(this::maybeShowSetupGuide);
     }
 
     private void addRootControls(LinearLayout parent) {
-        parent.addView(section("Root options"), margins(0, 2, 0, 0));
+        LinearLayout rootBox = new LinearLayout(this);
+        rootBox.setOrientation(LinearLayout.VERTICAL);
+        rootBox.setPadding(dp(6), dp(4), dp(6), dp(8));
+        GradientDrawable rootBackground = new GradientDrawable();
+        rootBackground.setColor(Color.argb(45, 190, 165, 235));
+        rootBackground.setCornerRadius(dp(8));
+        rootBackground.setStroke(dp(1), Color.argb(90, 190, 165, 235));
+        rootBox.setBackground(rootBackground);
+        parent.addView(rootBox, margins(0, 5, 0, 0));
+        rootBox.addView(section("Root options"), margins(0, 0, 0, 0));
         rootStatus = text("Root access is optional for regular button mappings.", 12, false);
         rootStatus.setTextColor(themeColor(android.R.attr.textColorSecondary));
-        parent.addView(rootStatus, margins(0, 0, 0, 1));
+        rootBox.addView(rootStatus, margins(0, 0, 0, 1));
         Button rootCheckFirst = button("Check root access");
+        styleSetupButton(rootCheckFirst);
+        rootCheckFirst.setTextSize(14);
+        rootCheckFirst.setHeight(dp(36));
+        rootCheckFirst.setPadding(dp(6), 0, dp(6), 0);
+        rootCheckFirst.setGravity(Gravity.CENTER);
+        rootCheckFirst.setBackgroundTintList(ColorStateList.valueOf(Color.rgb(95, 95, 98)));
         rootCheckFirst.setOnClickListener(v -> checkRootAccess(rootCheckFirst));
-        parent.addView(rootCheckFirst, matchMargins(0, 1, 0, -4));
+        rootBox.addView(rootCheckFirst, matchMargins(0, 1, 0, -4));
+        rootCheckFirst.getLayoutParams().height = dp(36);
         Switch rootAxes = new Switch(this);
         rootAxes.setText("Enable D-pad / Joystick");
         rootAxes.setTextSize(14);
         rootAxes.setChecked(prefs.getBoolean(Prefs.ROOT_AXES, false));
-        parent.addView(rootAxes);
+        rootAxes.setLayoutParams(new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        rootBox.addView(rootAxes, matchMargins(0, 12, 0, 4));
 
-        axisSources = new RadioGroup(this);
-        axisSources.setOrientation(RadioGroup.HORIZONTAL);
-        axisSources.setPadding(0, 0, 0, 0);
-        axisSources.setClipToPadding(false);
-        RadioButton dpadAxis = radio("D-pad", Prefs.AXIS_DPAD);
-        RadioButton leftAxis = radio("L-stick", Prefs.AXIS_LEFT_STICK);
-        RadioButton rightAxis = radio("R-stick", Prefs.AXIS_RIGHT_STICK);
-        dpadAxis.setTextSize(11);
-        leftAxis.setTextSize(11);
-        rightAxis.setTextSize(11);
-        dpadAxis.setSingleLine(true);
-        leftAxis.setSingleLine(true);
-        rightAxis.setSingleLine(true);
-        dpadAxis.setMinHeight(dp(32));
-        leftAxis.setMinHeight(dp(32));
-        rightAxis.setMinHeight(dp(32));
-        axisSources.addView(dpadAxis, new RadioGroup.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        axisSources.addView(leftAxis, new RadioGroup.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        axisSources.addView(rightAxis, new RadioGroup.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        int savedAxis = prefs.getInt(Prefs.AXIS_SOURCE, Prefs.AXIS_DPAD);
-        (savedAxis == Prefs.AXIS_RIGHT_STICK ? rightAxis
-                : savedAxis == Prefs.AXIS_LEFT_STICK ? leftAxis : dpadAxis).setChecked(true);
-        axisSources.setEnabled(rootAxes.isChecked());
-        setChildrenEnabled(axisSources, rootAxes.isChecked());
-        axisSources.setOnCheckedChangeListener((group, checkedId) -> {
-            View selected = group.findViewById(checkedId);
-            if (selected != null && selected.getTag() instanceof Integer) {
-                prefs.edit().putInt(Prefs.AXIS_SOURCE, (Integer) selected.getTag()).apply();
-                updateRootMappingLabels();
-            }
-        });
 
         checkRootButton = button("Check root access");
+        styleSetupButton(checkRootButton);
+        checkRootButton.setTextSize(14);
+        checkRootButton.setHeight(dp(36));
+        checkRootButton.setPadding(dp(6), 0, dp(6), 0);
+        checkRootButton.setGravity(Gravity.CENTER);
         Button checkRoot = checkRootButton;
         checkRoot.setOnClickListener(v -> checkRootAccess(checkRoot));
-        parent.addView(checkRoot, matchMargins(0, 1, 0, -4));
+        rootBox.addView(checkRoot, matchMargins(0, 1, 0, -4));
+        checkRoot.getLayoutParams().height = dp(36);
         checkRoot.setVisibility(View.GONE);
 
         Switch suspend = new Switch(this);
@@ -303,12 +341,20 @@ public class MainActivity extends Activity {
         suspend.setText("Suspend services during hold");
         suspend.setTextSize(14);
         suspend.setChecked(prefs.getBoolean(Prefs.SUSPEND_SERVICE, false));
-        parent.addView(suspend, margins(0, 4, 0, 0));
-        TextView suspendHint = text("Root required; restores on release. Auto-enabled for known conflicts when root is enabled.", 11, false);
+        suspend.setLayoutParams(new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        rootBox.addView(suspend, matchMargins(0, 2, 0, 0));
+        TextView suspendHint = text("Selected accessibility services are temporarily disabled while the modifier is held and restored when released. Known conflicts are auto-enabled when root is enabled.", 11, false);
         suspendHint.setTextColor(themeColor(android.R.attr.textColorSecondary));
-        parent.addView(suspendHint, margins(0, 1, 0, 2));
+        rootBox.addView(suspendHint, margins(0, 1, 0, 2));
         Button chooseService = button("Choose services");
-        parent.addView(chooseService, matchMargins(0, 0, 0, 0));
+        styleSetupButton(chooseService);
+        chooseService.setHeight(dp(36));
+        chooseService.setGravity(Gravity.CENTER);
+        chooseService.setBackgroundTintList(ColorStateList.valueOf(Color.rgb(95, 95, 98)));
+        rootBox.addView(chooseService, matchMargins(0, 0, 0, 0));
+        chooseService.getLayoutParams().height = dp(36);
+        chooseService.setTranslationY(0);
         chooseService.setOnClickListener(v -> chooseSuspendedService());
         suspend.setOnCheckedChangeListener((button, checked) -> {
             if (checked && (!hasRootAccess() || selectedSuspendServices().isEmpty())) {
@@ -327,16 +373,30 @@ public class MainActivity extends Activity {
                 return;
             }
             prefs.edit().putBoolean(Prefs.ROOT_AXES, checked).apply();
+            if (checked) {
+                // Root axes are brightness inputs only; do not allow a stick or
+                // D-pad direction to remain as the modifier.
+                prefs.edit().remove(Prefs.ROOT_MODIFIER_SOURCE)
+                        .remove(Prefs.ROOT_MODIFIER_DIRECTION).apply();
+                int modifierKey = prefs.getInt(Prefs.MODIFIER, KeyEvent.KEYCODE_BUTTON_R1);
+                if (isDpadKey(modifierKey)) {
+                    prefs.edit().putInt(Prefs.MODIFIER, KeyEvent.KEYCODE_BUTTON_R1).apply();
+                }
+            }
             if (checked) autoConfigureVolumeLinkSuspension();
-            setChildrenEnabled(axisSources, checked);
             updateRootStatus(checked);
             updateRootMappingLabels();
             updateSafetyText();
-            if (checked && !prefs.getBoolean(Prefs.ROOT_LIMIT_ACK, false)) {
+            if (checked) {
                 new AlertDialog.Builder(this)
-                        .setTitle("Root input limitation")
-                        .setMessage("Root mode can read D-pad and stick directions, but games may still see those movements. The Thor L2/R2 triggers also report analog axes.")
-                        .setPositiveButton("Continue", (dialog, which) ->
+                        .setTitle("Root input limitations")
+                        .setMessage("Root access is required to read D-pad and stick directions. Please be aware:\n\n"
+                                + "• These controls are available for Brighter and Dimmer mappings only; they cannot be used as the modifier.\n"
+                                + "• Root reading does not guarantee that games will stop receiving the same movement. A game may react at the same time as the brightness change.\n"
+                                + "• Only up and down directions change brightness. Other directions can be recorded but will not adjust it.\n"
+                                + "• The Thor L2/R2 triggers can report both button presses and analogue axes, which may cause unexpected results depending on the mapping.\n\n"
+                                + "Disable this option if it causes conflicts or unwanted input.")
+                        .setPositiveButton("Got it", (dialog, which) ->
                                 prefs.edit().putBoolean(Prefs.ROOT_LIMIT_ACK, true).apply())
                         .setNegativeButton("Cancel", (dialog, which) ->
                                 rootAxes.setChecked(false))
@@ -353,8 +413,9 @@ public class MainActivity extends Activity {
             boolean available = hasRootAccess();
             runOnUiThread(() -> {
                 button.setEnabled(true);
-                button.setText(available ? "Check root access - Enabled" : "Check root access");
-                button.setBackgroundTintList(available ? ColorStateList.valueOf(Color.rgb(70, 130, 75)) : null);
+                button.setText(available ? "Check root access - Enabled" : "Check root access - Needed");
+                button.setBackgroundTintList(ColorStateList.valueOf(available
+                        ? Color.rgb(70, 130, 75) : Color.rgb(170, 115, 35)));
                 if (available) autoConfigureVolumeLinkSuspension();
                 if (rootStatus != null) rootStatus.setText(available
                         ? "Root access is optional for regular button mappings."
@@ -375,7 +436,7 @@ public class MainActivity extends Activity {
 
     private void showKeyTransitionPrompt() {
         new AlertDialog.Builder(this).setCustomTitle(centeredDialogTitle("Key detection"))
-                .setMessage("Press \"CONTINUE\" to open Android Accessibility settings.\n\nThen:\n- Scroll to \"Downloaded apps\".\n- Select \"Thor's Lightning controls\".\n- Toggle it on.\n- Tap \"Allow\" when Android asks.\n\nPress the Thor's \"B\" button or the Android Back button twice to return here.")
+                .setMessage("Press \"CONTINUE\" to open Android Accessibility settings.\n\nThen:\n- Scroll to \"Downloaded apps\".\n- Select \"Thor's Lightning controls\".\n- Toggle it on.\n- Tap \"Allow\" when Android asks.\n\nPress the Thor's \"B\" button or the Android Back button once to return here.")
                 .setPositiveButton("CONTINUE", (d, w) -> openKeyDetection())
                 .setNegativeButton("Later", null).show();
     }
@@ -579,10 +640,13 @@ public class MainActivity extends Activity {
 
         safetyLabel = text("", 12, false);
         safetyLabel.setTextColor(Color.rgb(80, 60, 20));
-        safetyLabel.setBackgroundColor(Color.rgb(255, 246, 210));
+        GradientDrawable safetyBackground = new GradientDrawable();
+        safetyBackground.setColor(Color.rgb(255, 246, 210));
+        safetyBackground.setCornerRadius(dp(8));
+        safetyLabel.setBackground(safetyBackground);
         safetyLabel.setPadding(dp(10), dp(7), dp(10), dp(7));
         updateSafetyText();
-        behaviour.addView(safetyLabel, margins(0, 10, 0, 0));
+        behaviour.addView(safetyLabel, margins(0, 0, 0, 6));
 
     }
 
@@ -613,24 +677,227 @@ public class MainActivity extends Activity {
         record.setGravity(Gravity.CENTER);
         record.setPadding(0, 0, 0, 0);
         record.setIncludeFontPadding(false);
-        record.setOnClickListener(v ->
-                beginCapture(preference, label, title, allowsVolume));
+        record.setOnClickListener(v -> {
+            if (!requiredPermissionsReady()) {
+                Toast.makeText(this, "Set up both required permissions before recording buttons", Toast.LENGTH_LONG).show();
+                return;
+            }
+            showRecordPrompt(preference, label, title, allowsVolume);
+        });
         LinearLayout.LayoutParams recordParams = new LinearLayout.LayoutParams(dp(94), dp(38));
         recordParams.gravity = Gravity.CENTER_VERTICAL;
         row.addView(record, recordParams);
         parent.addView(row, matchMargins(0, 3, 0, 3));
     }
 
+    private boolean requiredPermissionsReady() {
+        return Settings.System.canWrite(this) && isAccessibilityServiceEnabled();
+    }
+
+    private void showRecordPrompt(String preference, TextView label, String title,
+                                   boolean allowsVolume) {
+        boolean rootDirection = prefs.getBoolean(Prefs.ROOT_AXES, false)
+                && (Prefs.UP_KEY.equals(preference) || Prefs.DOWN_KEY.equals(preference));
+        String message = Prefs.MODIFIER.equals(preference)
+                ? "Waiting for input...\n\nPress the controller button you want to use for the Modifier button."
+                : rootDirection
+                ? "Waiting for input...\n\nMove the D-pad or stick direction for " + title + "."
+                : "Waiting for input...\n\nPress the controller button you want to use for "
+                + (Prefs.UP_KEY.equals(preference) ? "turning the brightness up."
+                : "turning the brightness down.");
+        recordDialogMessage = text(message + "\n\n10 seconds", 16, false);
+        recordDialogCompleted = false;
+        recordDialogMessage.setGravity(Gravity.CENTER);
+        recordDialogMessage.setTextAlignment(View.TEXT_ALIGNMENT_CENTER);
+        recordDialogMessage.setMinHeight(dp(150));
+        recordDialogMessage.setPadding(dp(16), dp(18), dp(16), dp(18));
+        recordDialog = new AlertDialog.Builder(this)
+                .setTitle("Record " + title)
+                .setView(recordDialogMessage)
+                .create();
+        recordDialog.setCancelable(false);
+        recordDialog.setOnKeyListener((dialog, keyCode, keyEvent) -> {
+            if (recordDialogCompleted) return true;
+            if (keyEvent.getAction() == KeyEvent.ACTION_DOWN
+                    && keyEvent.getRepeatCount() == 0
+                    && keyCode != KeyEvent.KEYCODE_BACK) {
+                endCapture(true, keyCode);
+                return true;
+            }
+            return false;
+        });
+        recordDialog.setOnShowListener(dialog ->
+                beginCapture(preference, label, title, allowsVolume));
+        recordDialog.show();
+        if (recordDialog.getWindow() != null) {
+            recordDialog.getWindow().setLayout(dp(650), ViewGroup.LayoutParams.WRAP_CONTENT);
+        }
+        final long deadline = System.currentTimeMillis() + 10000;
+        recordCountdown = new Runnable() {
+            @Override public void run() {
+                if (!capturing || recordDialog == null || !recordDialog.isShowing()) return;
+                int remaining = (int) Math.ceil((deadline - System.currentTimeMillis()) / 1000.0);
+                if (remaining <= 0) {
+                    endCapture(false, 0);
+                } else {
+                    recordDialogMessage.setText(message + "\n\n" + remaining + " seconds");
+                    recordCountdownHandler.postDelayed(this, 250);
+                }
+            }
+        };
+        recordCountdownHandler.post(recordCountdown);
+    }
+
+    private void finishRecordDialog(String message) {
+        if (recordDialogMessage == null || recordDialog == null) return;
+        if (recordCountdown != null) recordCountdownHandler.removeCallbacks(recordCountdown);
+        recordDialogCompleted = true;
+        recordDialogMessage.setText(message);
+        recordDialogMessage.setTextSize(20);
+        recordDialogMessage.setTypeface(recordDialogMessage.getTypeface(), android.graphics.Typeface.BOLD);
+        recordDialogMessage.setTextColor(Color.rgb(70, 150, 75));
+        recordDialogMessage.postDelayed(() -> {
+            if (recordDialog != null && recordDialog.isShowing()) recordDialog.dismiss();
+            recordDialog = null;
+            recordDialogMessage = null;
+        }, 2000);
+    }
+
     private void beginCapture(String preference, TextView label, String title,
                               boolean allowsVolume) {
+        if (prefs.getBoolean(Prefs.ROOT_AXES, false)
+                && (Prefs.UP_KEY.equals(preference) || Prefs.DOWN_KEY.equals(preference))) {
+            beginRootDirectionCapture(preference, label, title);
+            return;
+        }
         capturing = true;
         capturePreference = preference;
         captureLabel = label;
         captureTitle = title;
         captureAllowsVolume = allowsVolume;
         prefs.edit().putBoolean(Prefs.CAPTURING, true).apply();
-        captureMessage.setText("Listening for " + title + "... Back cancels.");
-        captureMessage.setTextColor(themeColor(android.R.attr.colorAccent));
+    }
+
+    private void beginRootDirectionCapture(String preference, TextView label, String title) {
+        if (!hasRootAccess()) {
+            Toast.makeText(this, "Root access is required to record a D-pad or stick direction", Toast.LENGTH_LONG).show();
+            return;
+        }
+        stopRootDirectionRecorder();
+        capturing = true;
+        capturingRootDirection = true;
+        capturePreference = preference;
+        captureLabel = label;
+        captureTitle = title;
+        captureAllowsVolume = false;
+        prefs.edit().putBoolean(Prefs.CAPTURING, true).apply();
+        String rootCaptureNote = Prefs.MODIFIER.equals(preference)
+                ? " Note: using a D-pad or stick direction as the modifier is not recommended because games may also receive that input."
+                : "";
+        rootDirectionRecorder = new RootInputMonitor(new Handler(Looper.getMainLooper()),
+                new RootInputMonitor.Listener() {
+                    @Override public void onDirection(int encoded) {
+                        if (encoded != 0 && capturingRootDirection) {
+                            saveRootDirection(encoded / 10, encoded % 10);
+                        }
+                    }
+                    @Override public void onStopped() { }
+                });
+        rootDirectionRecorder.start(0);
+    }
+
+    private void saveRootDirection(int source, int direction) {
+        if (rootDirectionConflict(source, direction)) {
+            Toast.makeText(this, "This direction is already used by another brightness mapping", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        boolean recordingBright = Prefs.UP_KEY.equals(capturePreference);
+        boolean recordingDim = Prefs.DOWN_KEY.equals(capturePreference);
+        boolean swapWithDim = recordingBright
+                && source == prefs.getInt(Prefs.ROOT_DIM_SOURCE, -1)
+                && direction == prefs.getInt(Prefs.ROOT_DIM_DIRECTION, 0);
+        boolean swapWithBright = recordingDim
+                && source == prefs.getInt(Prefs.ROOT_BRIGHT_SOURCE, -1)
+                && direction == prefs.getInt(Prefs.ROOT_BRIGHT_DIRECTION, 0);
+        stopRootDirectionRecorder();
+        capturingRootDirection = false;
+        capturing = false;
+        SharedPreferences.Editor editor = prefs.edit().putBoolean(Prefs.CAPTURING, false);
+        if (Prefs.MODIFIER.equals(capturePreference)) {
+            editor.putInt(Prefs.ROOT_MODIFIER_DIRECTION, direction)
+                    .putInt(Prefs.ROOT_MODIFIER_SOURCE, source);
+        } else {
+            String directionPreference = Prefs.UP_KEY.equals(capturePreference)
+                    ? Prefs.ROOT_BRIGHT_DIRECTION : Prefs.ROOT_DIM_DIRECTION;
+            String sourcePreference = Prefs.UP_KEY.equals(capturePreference)
+                    ? Prefs.ROOT_BRIGHT_SOURCE : Prefs.ROOT_DIM_SOURCE;
+            editor.putInt(directionPreference, direction).putInt(sourcePreference, source);
+            if (swapWithDim) {
+                editor.putInt(Prefs.ROOT_DIM_DIRECTION, prefs.getInt(Prefs.ROOT_BRIGHT_DIRECTION, 0))
+                        .putInt(Prefs.ROOT_DIM_SOURCE, prefs.getInt(Prefs.ROOT_BRIGHT_SOURCE, -1));
+            } else if (swapWithBright) {
+                editor.putInt(Prefs.ROOT_BRIGHT_DIRECTION, prefs.getInt(Prefs.ROOT_DIM_DIRECTION, 0))
+                        .putInt(Prefs.ROOT_BRIGHT_SOURCE, prefs.getInt(Prefs.ROOT_DIM_SOURCE, -1));
+            }
+        }
+        editor.apply();
+        updateRootMappingLabels();
+        // The record row can be the currently active view while the monitor
+        // callback is completing. Update it explicitly so the new modifier or
+        // brightness direction is visible without leaving/reopening the page.
+        if (captureLabel != null) {
+            captureLabel.setText(mappingLabel(captureTitle,
+                    Prefs.MODIFIER.equals(capturePreference)
+                            ? prefs.getInt(Prefs.MODIFIER, KeyEvent.KEYCODE_BUTTON_R1)
+                            : Prefs.UP_KEY.equals(capturePreference)
+                            ? prefs.getInt(Prefs.UP_KEY, KeyEvent.KEYCODE_VOLUME_UP)
+                            : prefs.getInt(Prefs.DOWN_KEY, KeyEvent.KEYCODE_VOLUME_DOWN)));
+            captureLabel.requestLayout();
+            captureLabel.invalidate();
+        }
+        // Re-read the committed preferences once the row/layout pass has
+        // completed; this also covers the dual-screen UI retaining a stale
+        // text snapshot during the monitor callback.
+        new Handler(Looper.getMainLooper()).postDelayed(this::updateRootMappingLabels, 120);
+        updateRootStatus(true);
+        setStaticCaptureMessage();
+        finishRecordDialog("Saved the " + captureTitle + " as " + sourceName(source) + " " + rootDirectionName(direction) + ".");
+    }
+
+    private boolean rootDirectionConflict(int source, int direction) {
+        int brightSource = prefs.getInt(Prefs.ROOT_BRIGHT_SOURCE, -1);
+        int brightDirection = prefs.getInt(Prefs.ROOT_BRIGHT_DIRECTION, 0);
+        int dimSource = prefs.getInt(Prefs.ROOT_DIM_SOURCE, -1);
+        int dimDirection = prefs.getInt(Prefs.ROOT_DIM_DIRECTION, 0);
+        int modifierSource = prefs.getInt(Prefs.ROOT_MODIFIER_SOURCE, -1);
+        int modifierDirection = prefs.getInt(Prefs.ROOT_MODIFIER_DIRECTION, 0);
+        boolean matchesBright = !Prefs.UP_KEY.equals(capturePreference)
+                && source == brightSource && direction == brightDirection;
+        boolean matchesDim = !Prefs.DOWN_KEY.equals(capturePreference)
+                && source == dimSource && direction == dimDirection;
+        // A stick/D-pad used as the modifier must remain held. Any direction
+        // from that same source would release or replace the modifier, so the
+        // whole source is reserved while root modifier mapping is active.
+        boolean matchesModifier = !Prefs.MODIFIER.equals(capturePreference)
+                && source == modifierSource && modifierDirection != 0;
+        if (Prefs.MODIFIER.equals(capturePreference)) {
+            return matchesBright || matchesDim;
+        }
+        if (Prefs.UP_KEY.equals(capturePreference)) {
+            // An exact Dimmer match is swapped below; only the modifier source
+            // remains a hard conflict.
+            return matchesModifier;
+        }
+        // An exact Brighter match is swapped below; only the modifier source
+        // remains a hard conflict.
+        return matchesModifier;
+    }
+
+    private void stopRootDirectionRecorder() {
+        if (rootDirectionRecorder != null) {
+            rootDirectionRecorder.stop();
+            rootDirectionRecorder = null;
+        }
     }
 
     @Override
@@ -642,26 +909,32 @@ public class MainActivity extends Activity {
             endCapture(false, 0);
             return true;
         }
+        if (Prefs.MODIFIER.equals(capturePreference) && isDpadKey(code)) {
+            Toast.makeText(this, "Directional controls cannot be used as the modifier", Toast.LENGTH_LONG).show();
+            return true;
+        }
+        if (prefs.getBoolean(Prefs.ROOT_AXES, false)
+                && (Prefs.UP_KEY.equals(capturePreference) || Prefs.DOWN_KEY.equals(capturePreference))
+                && isDpadKey(code)) {
+            // Root capture must identify the physical D-pad source; never
+            // fall back to saving Android's generic DPAD key name.
+            return true;
+        }
+        if (capturingRootDirection) {
+            // Root capture listens to axes in parallel with normal key events.
+            // Ignore Android's synthetic D-pad events (the root monitor will
+            // identify their real D-pad/stick source), but still allow every
+            // face, shoulder, click, Start, Select, and other button through.
+            if (!isDpadKey(code) && code != KeyEvent.KEYCODE_POWER
+                    && code != KeyEvent.KEYCODE_HOME) {
+                endCapture(true, code);
+            }
+            return true;
+        }
         if (code == KeyEvent.KEYCODE_POWER || code == KeyEvent.KEYCODE_HOME
                 || (!captureAllowsVolume && (code == KeyEvent.KEYCODE_VOLUME_UP
                 || code == KeyEvent.KEYCODE_VOLUME_DOWN))) {
             Toast.makeText(this, "That system key cannot be used here", Toast.LENGTH_SHORT).show();
-            return true;
-        }
-        if (isDpadKey(code)) {
-            if (prefs.getBoolean(Prefs.ROOT_AXES, false)
-                    && !capturePreference.equals(Prefs.MODIFIER)) {
-                prefs.edit().putInt(Prefs.AXIS_SOURCE, Prefs.AXIS_DPAD)
-                        .putBoolean(Prefs.CAPTURING, false).apply();
-                capturing = false;
-                updateRootMappingLabels();
-                captureMessage.setText("Root D-pad selected: Up brightens and Down dims.");
-                captureMessage.setTextColor(themeColor(android.R.attr.textColorSecondary));
-                return true;
-            }
-            Toast.makeText(this,
-                    "Enable and grant Root axis input before selecting the D-pad",
-                    Toast.LENGTH_LONG).show();
             return true;
         }
         endCapture(true, code);
@@ -669,21 +942,46 @@ public class MainActivity extends Activity {
     }
 
     private void endCapture(boolean save, int code) {
+        if (save && Prefs.MODIFIER.equals(capturePreference)
+                && prefs.getBoolean(Prefs.ROOT_AXES, false) && isDpadKey(code)) {
+            Toast.makeText(this, "Directional controls cannot be used as the modifier", Toast.LENGTH_LONG).show();
+            return;
+        }
+        stopRootDirectionRecorder();
+        capturingRootDirection = false;
         capturing = false;
         prefs.edit().putBoolean(Prefs.CAPTURING, false).apply();
         if (save) {
             String swappedTitle = saveMappingWithSwap(code);
-            updateRootMappingLabels();
             if (swappedTitle == null) {
-                captureMessage.setText("Saved " + captureTitle + " as " + keyName(code) + ".");
+                setStaticCaptureMessage();
             } else {
-                captureMessage.setText("Saved " + captureTitle + " as " + keyName(code)
-                        + " and moved the old button to " + swappedTitle + ".");
+                setStaticCaptureMessage();
             }
+            if (Prefs.MODIFIER.equals(capturePreference)) {
+                prefs.edit().remove(Prefs.ROOT_MODIFIER_SOURCE)
+                        .remove(Prefs.ROOT_MODIFIER_DIRECTION).apply();
+            }
+            // Refresh after clearing any previous root modifier mapping so the
+            // visible label always reflects the newly saved control.
+            updateRootMappingLabels();
             updateSafetyText();
+            finishRecordDialog(swappedTitle == null
+                    ? "Saved the " + captureTitle + " as " + keyName(code) + "."
+                    : "Saved the " + captureTitle + " as " + keyName(code) + ".");
         } else {
-            captureMessage.setText("Recording cancelled.");
+            setStaticCaptureMessage();
+            if (recordCountdown != null) recordCountdownHandler.removeCallbacks(recordCountdown);
+            if (recordDialog != null) recordDialog.dismiss();
+            recordDialog = null;
+            recordDialogMessage = null;
         }
+        setStaticCaptureMessage();
+    }
+
+    private void setStaticCaptureMessage() {
+        if (captureMessage == null) return;
+        captureMessage.setText("Use Volume, face, shoulder, stick-click, Start or Select. With root enabled, Record can capture D-pad or stick directions.");
         captureMessage.setTextColor(themeColor(android.R.attr.textColorSecondary));
     }
 
@@ -750,7 +1048,7 @@ public class MainActivity extends Activity {
             prefs.edit().putBoolean(Prefs.SETUP_COMPLETE_SHOWN, true).apply();
             new AlertDialog.Builder(this)
                     .setCustomTitle(centeredDialogTitle("\u26A1 Setup Complete! \u26A1"))
-                    .setMessage("Brightness control is ready.\n\nRoot access is required if you want to use the D-pad or analogue sticks. To do this, follow the steps below:\n\n- Tap \"Check root access\".\n- Allow root access when Android asks.\n- Turn on \"Enable D-pad / Joystick\".\n- Choose D-pad, L-stick, or R-stick under the root options.\n\nNote: These control options support up and down directions only.")
+                    .setMessage("Brightness control is ready.\n\nRoot access is required if you want to use the D-pad or analogue sticks. To do this, follow the steps below:\n\n- Tap \"Check root access\".\n- Allow root access when Android asks.\n- Turn on \"Enable D-pad / Joystick\".\n- Tap a Brighter or Dimmer \"Record\" button, then move the control and direction you want to use.\n\nNote: D-pad and stick directions can be recorded independently for Brighter and Dimmer.")
                     .setPositiveButton("Got it", null).show();
         }
         if (enabledSwitch != null) {
@@ -826,7 +1124,6 @@ public class MainActivity extends Activity {
         boolean write = Settings.System.canWrite(this);
         boolean service = isAccessibilityServiceEnabled();
         updateSetupButton(brightnessPermissionButton, "Set up permissions", write && service);
-        brightnessPermissionButton.setText("Set up permissions");
         if (brightnessStatus != null) {
             brightnessStatus.setText("Brightness permission - " + (write ? "Enabled" : "Needed"));
             keyStatus.setText("Key detection - " + (service ? "Enabled" : "Needed"));
@@ -837,7 +1134,7 @@ public class MainActivity extends Activity {
 
     private void updateSetupButton(Button button, String label, boolean available) {
         if (button == null) return;
-        button.setTextSize(16);
+        button.setTextSize(button == checkRootButton ? 14 : button == brightnessPermissionButton ? 14 : 16);
         button.setText(available ? label + " - Enabled" : label + " - Needed");
         button.setTextColor(themeColor(android.R.attr.textColorPrimary));
         button.setBackgroundTintList(available
@@ -882,6 +1179,13 @@ public class MainActivity extends Activity {
                 .show();
     }
 
+
+    @Override
+    protected void onDestroy() {
+        stopRootDirectionRecorder();
+        super.onDestroy();
+    }
+
     private void updateStepLabel(int percent) {
         stepLabel.setText(percent + "% per press");
     }
@@ -910,15 +1214,9 @@ public class MainActivity extends Activity {
 
     private void updateRootStatus(boolean enabled) {
         if (rootStatus == null) return;
-        rootStatus.setText(enabled
-                ? "Root active - hold your modifier and move the selected control up/down."
-                : "Root access is optional for regular button mappings.");
-    }
-
-    private void setChildrenEnabled(ViewGroup group, boolean enabled) {
-        for (int index = 0; index < group.getChildCount(); index++) {
-            group.getChildAt(index).setEnabled(enabled);
-        }
+        // Keep this explanatory text stable; the switch state itself shows
+        // whether root directional input is enabled.
+        rootStatus.setText("Root access is optional for regular button mappings.");
     }
 
     private String keyName(int code) {
@@ -928,20 +1226,52 @@ public class MainActivity extends Activity {
 
     private CharSequence mappingLabel(String title, int fallbackKey) {
         String assigned;
-        if (!prefs.getBoolean(Prefs.ROOT_AXES, false)
+        if ("Modifier".equals(title) && prefs.getInt(Prefs.ROOT_MODIFIER_DIRECTION, 0) != 0) {
+            int source = prefs.getInt(Prefs.ROOT_MODIFIER_SOURCE, Prefs.AXIS_DPAD);
+            assigned = sourceName(source) + " " + rootDirectionName(
+                    prefs.getInt(Prefs.ROOT_MODIFIER_DIRECTION, 0)) + " (root)";
+        } else if (!(prefs.getBoolean(Prefs.ROOT_AXES, false)
+                && rootDirectionMapped(title))
                 || (!"Brighter".equals(title) && !"Dimmer".equals(title))) {
             assigned = keyName(fallbackKey);
         } else {
-            int source = prefs.getInt(Prefs.AXIS_SOURCE, Prefs.AXIS_DPAD);
-            String control = source == Prefs.AXIS_RIGHT_STICK ? "R stick"
-                    : source == Prefs.AXIS_LEFT_STICK ? "L stick" : "D-pad";
-            assigned = control + ("Brighter".equals(title) ? " Up (root)" : " Down (root)");
+            int source = prefs.getInt("Brighter".equals(title)
+                    ? Prefs.ROOT_BRIGHT_SOURCE : Prefs.ROOT_DIM_SOURCE, Prefs.AXIS_DPAD);
+            String control = sourceName(source);
+            int direction = prefs.getInt("Brighter".equals(title)
+                    ? Prefs.ROOT_BRIGHT_DIRECTION : Prefs.ROOT_DIM_DIRECTION, 0);
+            assigned = control + " " + rootDirectionName(direction) + " (root)";
         }
         String full = title + "\n" + assigned;
         SpannableString styled = new SpannableString(full);
         styled.setSpan(new BackgroundColorSpan(Color.rgb(95, 75, 125)),
                 full.length() - assigned.length(), full.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
         return styled;
+    }
+
+    private boolean rootDirectionMapped(String title) {
+        if ("Brighter".equals(title)) {
+            return prefs.getInt(Prefs.ROOT_BRIGHT_DIRECTION, 0) != 0;
+        }
+        if ("Dimmer".equals(title)) {
+            return prefs.getInt(Prefs.ROOT_DIM_DIRECTION, 0) != 0;
+        }
+        return false;
+    }
+
+    private String rootDirectionName(int direction) {
+        switch (direction) {
+            case Prefs.ROOT_DIRECTION_UP: return "Up";
+            case Prefs.ROOT_DIRECTION_DOWN: return "Down";
+            case Prefs.ROOT_DIRECTION_LEFT: return "Left";
+            case Prefs.ROOT_DIRECTION_RIGHT: return "Right";
+            default: return "Not recorded";
+        }
+    }
+
+    private String sourceName(int source) {
+        return source == Prefs.AXIS_RIGHT_STICK ? "R-stick"
+                : source == Prefs.AXIS_LEFT_STICK ? "L-stick" : "D-pad";
     }
 
     private void updateRootMappingLabels() {
@@ -966,7 +1296,7 @@ public class MainActivity extends Activity {
         String down = keyName(prefs.getInt(Prefs.DOWN_KEY, KeyEvent.KEYCODE_VOLUME_DOWN));
         if (prefs.getBoolean(Prefs.ROOT_AXES, false)) {
             safetyLabel.setText("Root safety: press " + modifier + " + " + up + " + " + down
-                    + " together to disable. These are the saved fallback buttons; analog directions cannot be pressed together.");
+                    + " together to disable. These are the saved fallback buttons; stick axes cannot send opposing directions at the same time.");
         } else {
             safetyLabel.setText("Safety: press " + modifier + " + " + up + " + " + down
                     + " together to disable. Mapped buttons work normally without the modifier.");
@@ -1030,7 +1360,14 @@ public class MainActivity extends Activity {
     private void styleSetupButton(Button button) {
         button.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
         button.setPadding(dp(20), 0, dp(20), 0);
+        GradientDrawable buttonBackground = new GradientDrawable();
+        buttonBackground.setColor(Color.WHITE);
+        buttonBackground.setCornerRadius(dp(8));
+        button.setBackground(buttonBackground);
+        // Keep the setup controls compact so the fixed three-column layout
+        // clears the Thor's three-button navigation bar.
         button.setMinHeight(dp(48));
+        button.setMinimumHeight(dp(48));
     }
 
     private RadioButton radio(String value, int target) {

@@ -15,79 +15,99 @@ final class RootInputMonitor {
     private volatile boolean running;
     private Process process;
     private Thread thread;
-    private volatile int rootShellPid = -1;
 
     RootInputMonitor(Handler mainHandler, Listener listener) {
         this.mainHandler = mainHandler;
         this.listener = listener;
     }
 
-    synchronized void start(int source) {
+    synchronized void start(int ignoredSource) {
         stop();
         running = true;
-        thread = new Thread(() -> readEvents(source), "ThorRootInput");
+        thread = new Thread(this::readEvents, "ThorRootInput");
         thread.start();
     }
 
     synchronized void stop() {
         running = false;
-        int pid = rootShellPid;
-        rootShellPid = -1;
-        if (pid > 1) {
-            try {
-                new ProcessBuilder("su", "-c", "kill " + pid).start().waitFor();
-            } catch (Exception ignored) {
-                // The parent-watch loop is the fallback if explicit shutdown races.
-            }
-        }
         if (process != null) process.destroy();
+        if (process != null) process.destroyForcibly();
         process = null;
         if (thread != null) thread.interrupt();
         thread = null;
     }
 
-    private void readEvents(int source) {
-        String axis = source == Prefs.AXIS_RIGHT_STICK ? "ABS_RZ"
-                : source == Prefs.AXIS_LEFT_STICK ? "ABS_Y" : "ABS_HAT0Y";
+    private void readEvents() {
+        int dpadX = 0, dpadY = 0, leftX = 0, leftY = 0, rightX = 0, rightY = 0;
+        final long captureStart = System.currentTimeMillis();
         try {
-            int appPid = android.os.Process.myPid();
-            String command = "echo THOR_PID:$$; "
-                    // The Thor's controller is exposed as /dev/input/event9 on
-                    // current firmware (event12 no longer exists).  Reading
-                    // the old node silently produced no D-pad/stick events.
-                    + "getevent -lt /dev/input/event9 & child=$!; "
-                    + "trap 'kill $child 2>/dev/null' TERM EXIT; "
-                    + "while kill -0 " + appPid + " 2>/dev/null; do sleep 1; done; "
-                    + "kill $child 2>/dev/null; wait $child";
-            process = new ProcessBuilder("su", "-c", command)
+            // Read the complete root input stream rather than relying on a
+            // fixed event-node number. Firmware updates can renumber the
+            // controller device; the axis token still identifies each source.
+            process = new ProcessBuilder("su", "-c", "exec getevent -lt")
                     .redirectErrorStream(true).start();
             BufferedReader reader = new BufferedReader(
                     new InputStreamReader(process.getInputStream()));
             String line;
             while (running && (line = reader.readLine()) != null) {
-                if (line.startsWith("THOR_PID:")) {
-                    try {
-                        rootShellPid = Integer.parseInt(line.substring("THOR_PID:".length()).trim());
-                    } catch (NumberFormatException ignored) {
-                        rootShellPid = -1;
+                if (!line.contains("EV_ABS")) continue;
+                // Match complete getevent axis tokens.  Substring matching can
+                // misclassify HAT/other axis names as the left stick.
+                String axis = "";
+                String[] tokens = line.trim().split("\\s+");
+                for (String token : tokens) {
+                    if (token.equals("ABS_HAT0X") || token.equals("ABS_HAT0Y")
+                            || token.equals("ABS_X") || token.equals("ABS_Y")
+                            || token.equals("ABS_Z") || token.equals("ABS_RZ")) {
+                        axis = token;
+                        break;
                     }
-                    continue;
                 }
-                if (!line.contains("EV_ABS") || !line.contains(axis)) continue;
-                String[] parts = line.trim().split("\\s+");
-                int raw = (int) Long.parseUnsignedLong(parts[parts.length - 1], 16);
-                int direction;
+                int source = axis.startsWith("ABS_HAT0") ? Prefs.AXIS_DPAD
+                        : (axis.equals("ABS_X") || axis.equals("ABS_Y")) ? Prefs.AXIS_LEFT_STICK
+                        : (axis.equals("ABS_Z") || axis.equals("ABS_RZ")) ? Prefs.AXIS_RIGHT_STICK : -1;
+                if (source < 0) continue;
+                int raw = (int) Long.parseUnsignedLong(tokens[tokens.length - 1], 16);
                 if (source == Prefs.AXIS_DPAD) {
-                    direction = raw < 0 ? 1 : raw > 0 ? -1 : 0;
+                    if (axis.equals("ABS_HAT0X")) dpadX = raw; else dpadY = raw;
+                    if (System.currentTimeMillis() - captureStart >= 300) emit(source, directionFor(source, dpadX, dpadY));
+                } else if (source == Prefs.AXIS_LEFT_STICK) {
+                    if (axis.equals("ABS_X")) leftX = raw; else leftY = raw;
+                    if (System.currentTimeMillis() - captureStart >= 300) emit(source, directionFor(source, leftX, leftY));
                 } else {
-                    direction = raw < -12000 ? 1 : raw > 12000 ? -1 : 0;
+                    if (axis.equals("ABS_Z")) rightX = raw; else rightY = raw;
+                    if (System.currentTimeMillis() - captureStart >= 300) emit(source, directionFor(source, rightX, rightY));
                 }
-                mainHandler.post(() -> listener.onDirection(direction));
             }
         } catch (Exception ignored) {
             if (running) mainHandler.post(listener::onStopped);
         } finally {
             running = false;
         }
+    }
+
+    private void emit(int source, int direction) {
+        mainHandler.post(() -> listener.onDirection(direction == 0 ? 0 : source * 10 + direction));
+    }
+
+    private int directionFor(int source, int horizontal, int vertical) {
+        if (source == Prefs.AXIS_DPAD) {
+            if (horizontal < 0) return Prefs.ROOT_DIRECTION_LEFT;
+            if (horizontal > 0) return Prefs.ROOT_DIRECTION_RIGHT;
+            if (vertical < 0) return Prefs.ROOT_DIRECTION_UP;
+            if (vertical > 0) return Prefs.ROOT_DIRECTION_DOWN;
+            return 0;
+        }
+
+        // Use a forgiving dead-zone so slightly diagonal pushes still resolve
+        // to the intended cardinal direction.
+        int threshold = 8000;
+        int horizontalMagnitude = Math.abs(horizontal);
+        int verticalMagnitude = Math.abs(vertical);
+        if (horizontalMagnitude < threshold && verticalMagnitude < threshold) return 0;
+        if (horizontalMagnitude >= verticalMagnitude) {
+            return horizontal < 0 ? Prefs.ROOT_DIRECTION_LEFT : Prefs.ROOT_DIRECTION_RIGHT;
+        }
+        return vertical < 0 ? Prefs.ROOT_DIRECTION_UP : Prefs.ROOT_DIRECTION_DOWN;
     }
 }

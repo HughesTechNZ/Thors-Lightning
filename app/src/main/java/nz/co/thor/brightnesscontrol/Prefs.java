@@ -21,6 +21,16 @@ final class Prefs {
     static final String DOWN_KEY = "down_key";
     static final String ROOT_AXES = "root_axes";
     static final String AXIS_SOURCE = "axis_source";
+    static final String ROOT_BRIGHT_DIRECTION = "root_bright_direction";
+    static final String ROOT_DIM_DIRECTION = "root_dim_direction";
+    static final String ROOT_BRIGHT_SOURCE = "root_bright_source";
+    static final String ROOT_DIM_SOURCE = "root_dim_source";
+    static final String ROOT_MODIFIER_SOURCE = "root_modifier_source";
+    static final String ROOT_MODIFIER_DIRECTION = "root_modifier_direction";
+    static final int ROOT_DIRECTION_UP = 1;
+    static final int ROOT_DIRECTION_DOWN = 2;
+    static final int ROOT_DIRECTION_LEFT = 3;
+    static final int ROOT_DIRECTION_RIGHT = 4;
     static final String ROOT_LIMIT_ACK = "root_limit_ack";
     static final String SETUP_GUIDE_SHOWN = "setup_guide_shown";
     static final String AWAITING_STEP_TWO = "awaiting_step_two";
