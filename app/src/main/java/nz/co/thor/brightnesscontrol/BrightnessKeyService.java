@@ -70,6 +70,19 @@ public class BrightnessKeyService extends AccessibilityService {
             if (Math.abs(value - lastHallValue) > 0.1f) {
                 lastHallValue = value;
                 Log.d(TAG, "hall transition value=" + value);
+                // On the Thor, the Hall close transition arrives before
+                // Android replaces the top brightness setting with its
+                // screen-off value. Capture the real target here.
+                if (value < 0.5f && (Prefs.get(BrightnessKeyService.this)
+                        .getBoolean(Prefs.GENTLE_WAKE, false) || WAKE_ZERO_TEST_MODE)) {
+                    int observedTop = readSystemInt(Settings.System.SCREEN_BRIGHTNESS, 128);
+                    wakeTop = observedTop > 1 ? observedTop : pInt(Prefs.WAKE_TOP, 255);
+                    wakeBottom = readBottomBrightness();
+                    Prefs.get(BrightnessKeyService.this).edit()
+                            .putInt(Prefs.WAKE_TOP, wakeTop)
+                            .putInt(Prefs.WAKE_BOTTOM, wakeBottom).apply();
+                    Log.d(TAG, "hall close saved targetTop=" + wakeTop + " targetBottom=" + wakeBottom);
+                }
                 if (Prefs.get(BrightnessKeyService.this).getBoolean(Prefs.GENTLE_WAKE, false)) {
                     // The Hall transition precedes Android's display wake
                     // restore, so clamp brightness before the visible flash.
@@ -86,7 +99,8 @@ public class BrightnessKeyService extends AccessibilityService {
                     && !WAKE_ZERO_TEST_MODE) return;
             if (Intent.ACTION_SCREEN_OFF.equals(intent.getAction())) {
                 SharedPreferences p = Prefs.get(BrightnessKeyService.this);
-                wakeTop = readSystemInt(Settings.System.SCREEN_BRIGHTNESS, 128);
+                int observedTop = readSystemInt(Settings.System.SCREEN_BRIGHTNESS, 128);
+                wakeTop = observedTop > 1 ? observedTop : pInt(Prefs.WAKE_TOP, 255);
                 wakeBottom = readBottomBrightness();
                 p.edit().putInt(Prefs.WAKE_TOP, wakeTop).putInt(Prefs.WAKE_BOTTOM, wakeBottom).apply();
                 wakePending = true;
@@ -109,12 +123,15 @@ public class BrightnessKeyService extends AccessibilityService {
                 handler.removeCallbacks(wakeZeroGuard);
                 handler.post(wakeZeroGuard);
                 if (WAKE_ZERO_TEST_MODE) {
-                    // Keep enforcing zero after wake; otherwise Android may
-                    // restore the top panel level after our one-time write.
+                    // Diagnostic one-shot test: hold zero, then restore both
+                    // panels with one controller write (no ramp updates).
                     wakeRampActive = false;
                     handler.removeCallbacks(wakeZeroGuard);
-                    handler.post(wakeZeroGuard);
-                    Log.d(TAG, "zero-hold test: keeping brightness at zero after wake");
+                    handler.postDelayed(() -> {
+                        writeWakeBrightness(wakeTop, wakeBottom);
+                        wakePending = false;
+                        Log.d(TAG, "zero-hold test: one-shot brightness restore");
+                    }, 10000);
                     return;
                 }
                 wakeStartedAt = android.os.SystemClock.uptimeMillis();
@@ -460,7 +477,10 @@ public class BrightnessKeyService extends AccessibilityService {
             stored = Settings.Secure.getInt(getContentResolver(),
                     "dual_screen_brightness_level");
         } catch (Settings.SettingNotFoundException exception) {
-            stored = 50;
+            // Thor does not expose the lower panel's current level on all
+            // firmware builds; use full brightness rather than an arbitrary
+            // mid-level fallback when capturing a wake target.
+            stored = 100;
         }
         cachedBottomBrightness = clamp(Math.round(stored * 2.55f), 1, 255);
         return cachedBottomBrightness;
