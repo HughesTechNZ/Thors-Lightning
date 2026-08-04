@@ -9,7 +9,7 @@ firmware.
 > Technologies Co., Ltd. AYN and Thor are used only to identify the compatible
 > device. All related trademarks belong to their respective owners.
 
-![Thor's Lightning dashboard](docs/dashboard-v1.3.png)
+![Thor's Lightning dashboard](https://raw.githubusercontent.com/HughesTechNZ/Thors-Lightning/main/docs/dashboard-v1.3.png)
 
 ## What it does
 
