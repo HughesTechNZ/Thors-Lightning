@@ -13,6 +13,10 @@ final class Prefs {
     static final String HOLD_STEP = "hold_step";
     static final String LINK_HOLD_STEP = "link_hold_step";
     static final String REPEAT_DELAY = "repeat_delay";
+    static final String GENTLE_WAKE = "gentle_wake";
+    static final String GENTLE_WAKE_DURATION = "gentle_wake_duration";
+    static final String WAKE_TOP = "wake_top";
+    static final String WAKE_BOTTOM = "wake_bottom";
     static final String CONSUME_MODIFIER = "consume_modifier";
     static final String CAPTURING = "capturing";
     static final String TARGET = "target";
@@ -39,6 +43,8 @@ final class Prefs {
     static final String ADVANCE_TO_KEY_PENDING = "advance_to_key_pending";
     static final String ADVANCE_TO_BRIGHTNESS_PENDING = "advance_to_brightness_pending";
     static final String SETUP_COMPLETE_SHOWN = "setup_complete_shown";
+    static final String CONFLICT_WARNING_SHOWN = "conflict_warning_shown";
+    static final String CONFLICT_WARNING_SERVICES = "conflict_warning_services";
     static final String SUSPEND_SERVICE = "suspend_service";
     static final String SUSPEND_SERVICE_COMPONENT = "suspend_service_component";
     static final String SUSPEND_SERVICE_ACTIVE = "suspend_service_active";

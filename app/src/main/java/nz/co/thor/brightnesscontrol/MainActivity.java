@@ -288,7 +288,10 @@ public class MainActivity extends Activity {
         reserveBox.addView(consumeHint, margins(0, 0, 0, 0));
         addBehaviourControls(behaviour);
         setContentView(root);
-        root.post(this::maybeShowSetupGuide);
+        root.post(() -> {
+            maybeShowSetupGuide();
+            root.postDelayed(this::maybeShowConflictWarning, 350);
+        });
     }
 
     private void addRootControls(LinearLayout parent) {
@@ -548,6 +551,9 @@ public class MainActivity extends Activity {
         RadioButton both = radio("Both", Prefs.TARGET_BOTH);
         RadioButton top = radio("Top", Prefs.TARGET_TOP);
         RadioButton bottom = radio("Bottom", Prefs.TARGET_BOTTOM);
+        both.setTextSize(13);
+        top.setTextSize(13);
+        bottom.setTextSize(13);
         targets.addView(both, new RadioGroup.LayoutParams(0,
                 ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         targets.addView(top, new RadioGroup.LayoutParams(0,
@@ -563,10 +569,10 @@ public class MainActivity extends Activity {
                 prefs.edit().putInt(Prefs.TARGET, (Integer) selected.getTag()).apply();
             }
         });
-        behaviour.addView(targets, matchMargins(0, 0, 0, 10));
+        behaviour.addView(targets, matchMargins(0, 0, 0, 0));
 
         behaviour.addView(section("Brightness step"));
-        stepLabel = text("", 16, true);
+        stepLabel = text("", 15, true);
         behaviour.addView(stepLabel);
         SeekBar step = new SeekBar(this);
         step.setMax(24);
@@ -588,10 +594,10 @@ public class MainActivity extends Activity {
 
         Switch linkHold = new Switch(this);
         linkHold.setText("Link hold step to press step");
-        linkHold.setTextSize(13);
+        linkHold.setTextSize(12);
         linkHold.setChecked(prefs.getBoolean(Prefs.LINK_HOLD_STEP, true));
         behaviour.addView(linkHold, margins(0, 0, 0, 0));
-        TextView holdLabel = text("Hold: " + prefs.getInt(Prefs.HOLD_STEP, savedPress) + "% per repeat", 14, true);
+        TextView holdLabel = text("Hold: " + prefs.getInt(Prefs.HOLD_STEP, savedPress) + "% per repeat", 13, true);
         behaviour.addView(holdLabel);
         SeekBar hold = new SeekBar(this);
         hold.setMax(24);
@@ -617,8 +623,8 @@ public class MainActivity extends Activity {
             }
         });
 
-        behaviour.addView(section("Hold repeat speed"), margins(0, 8, 0, 0));
-        repeatLabel = text("", 16, true);
+        behaviour.addView(section("Hold repeat speed"), margins(0, 2, 0, 0));
+        repeatLabel = text("", 15, true);
         behaviour.addView(repeatLabel);
         SeekBar repeat = new SeekBar(this);
         repeat.setMax(18);
@@ -634,17 +640,41 @@ public class MainActivity extends Activity {
         });
         behaviour.addView(repeat);
 
+        LinearLayout gentleBox = new LinearLayout(this);
+        gentleBox.setOrientation(LinearLayout.VERTICAL);
+        gentleBox.setPadding(dp(8), dp(1), dp(8), dp(2));
+        GradientDrawable gentleBackground = new GradientDrawable();
+        gentleBackground.setColor(Color.argb(45, 190, 165, 235));
+        gentleBackground.setCornerRadius(dp(8));
+        gentleBackground.setStroke(dp(1), Color.argb(90, 190, 165, 235));
+        gentleBox.setBackground(gentleBackground);
+        behaviour.addView(gentleBox, matchMargins(0, 2, 0, 0));
+        TextView gentleTitle = text("Wake behavior", 13, true);
+        gentleBox.addView(gentleTitle, margins(0, 0, 0, 0));
+        Switch gentleWake = new Switch(this);
+        gentleWake.setText("Gentle brightness on wake");
+        gentleWake.setTextSize(12);
+        gentleWake.setChecked(prefs.getBoolean(Prefs.GENTLE_WAKE, false));
+        gentleWake.setOnCheckedChangeListener((button, checked) -> {
+            if (checked) showGentleWakeSettings(gentleWake);
+            else prefs.edit().putBoolean(Prefs.GENTLE_WAKE, false).apply();
+        });
+        gentleBox.addView(gentleWake, matchMargins(0, 0, 0, 0));
+        TextView gentleHint = text("Tap to choose wake-up speed.", 10, false);
+        gentleHint.setTextColor(themeColor(android.R.attr.textColorSecondary));
+        gentleBox.addView(gentleHint, margins(0, 0, 0, 0));
+
         Space safetySpacer = new Space(this);
         behaviour.addView(safetySpacer, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
 
-        safetyLabel = text("", 12, false);
+        safetyLabel = text("", 11, false);
         safetyLabel.setTextColor(Color.rgb(80, 60, 20));
         GradientDrawable safetyBackground = new GradientDrawable();
         safetyBackground.setColor(Color.rgb(255, 246, 210));
         safetyBackground.setCornerRadius(dp(8));
         safetyLabel.setBackground(safetyBackground);
-        safetyLabel.setPadding(dp(10), dp(7), dp(10), dp(7));
+        safetyLabel.setPadding(dp(10), dp(5), dp(10), dp(5));
         updateSafetyText();
         behaviour.addView(safetyLabel, margins(0, 0, 0, 6));
 
@@ -688,6 +718,43 @@ public class MainActivity extends Activity {
         recordParams.gravity = Gravity.CENTER_VERTICAL;
         row.addView(record, recordParams);
         parent.addView(row, matchMargins(0, 3, 0, 3));
+    }
+
+    private void showGentleWakeSettings(Switch gentleWake) {
+        int saved = Math.max(100, Math.min(10000,
+                prefs.getInt(Prefs.GENTLE_WAKE_DURATION, 1500)));
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setPadding(dp(24), dp(4), dp(24), 0);
+        TextView description = text("When the Thor wakes after the screens were off, brightness rises gradually to reduce glare.", 14, false);
+        content.addView(description, matchMargins(0, 0, 0, 4));
+        TextView value = text("Transition: " + formatWakeDuration(saved), 15, true);
+        content.addView(value, matchMargins(0, 0, 0, 0));
+        SeekBar slider = new SeekBar(this);
+        slider.setMax(99);
+        slider.setProgress((saved / 100) - 1);
+        slider.setOnSeekBarChangeListener(new SimpleSeekListener() {
+            @Override public void onProgressChanged(SeekBar bar, int progress, boolean fromUser) {
+                value.setText("Transition: " + formatWakeDuration((progress + 1) * 100));
+            }
+        });
+        content.addView(slider, matchMargins(0, 0, 0, 0));
+        new AlertDialog.Builder(this)
+                .setCustomTitle(centeredDialogTitle("Gentle brightness on wake"))
+                .setView(content)
+                .setPositiveButton("Enable", (dialog, which) -> saveGentleWake((slider.getProgress() + 1) * 100))
+                .setNegativeButton("Cancel", (dialog, which) -> gentleWake.setChecked(false))
+                .setOnCancelListener(dialog -> gentleWake.setChecked(false))
+                .show();
+    }
+
+    private String formatWakeDuration(int durationMs) {
+        return String.format(java.util.Locale.ROOT, "%.1f seconds", durationMs / 1000f);
+    }
+
+    private void saveGentleWake(int duration) {
+        prefs.edit().putBoolean(Prefs.GENTLE_WAKE, true)
+                .putInt(Prefs.GENTLE_WAKE_DURATION, duration).apply();
     }
 
     private boolean requiredPermissionsReady() {
@@ -1054,6 +1121,17 @@ public class MainActivity extends Activity {
         if (enabledSwitch != null) {
             enabledSwitch.setChecked(prefs.getBoolean(Prefs.ENABLED, true));
         }
+        // Refresh known conflict services when the app returns to the
+        // foreground. This also catches ThorVolumeLink being enabled after
+        // the initial root setup.
+        if (prefs.getBoolean(Prefs.ROOT_AXES, false) || hasRootAccess()) {
+            autoConfigureVolumeLinkSuspension();
+            new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                if (!isFinishing() && (prefs.getBoolean(Prefs.ROOT_AXES, false) || hasRootAccess())) {
+                    autoConfigureVolumeLinkSuspension();
+                }
+            }, 1500);
+        }
         if (prefs.getBoolean(Prefs.AWAITING_STEP_TWO, false)
                 && Settings.System.canWrite(this) && !isAccessibilityServiceEnabled()) {
             prefs.edit().putBoolean(Prefs.AWAITING_STEP_TWO, false).apply();
@@ -1176,6 +1254,40 @@ public class MainActivity extends Activity {
                 .setPositiveButton("Open Accessibility", (dialog, which) ->
                         startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)))
                 .setNegativeButton("Later", null)
+                .show();
+    }
+
+    private java.util.Set<String> knownConflictServicesEnabled() {
+        java.util.Set<String> matches = new java.util.HashSet<>();
+        String enabled = Settings.Secure.getString(getContentResolver(),
+                Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES);
+        if (enabled == null) return matches;
+        String ours = getPackageName().toLowerCase(java.util.Locale.ROOT);
+        for (String id : enabled.split(":")) {
+            String lower = id.toLowerCase(java.util.Locale.ROOT);
+            if (!lower.startsWith(ours + "/")
+                    && (lower.contains("thorvolume") || lower.contains("volumecontrol"))) {
+                matches.add(id);
+            }
+        }
+        return matches;
+    }
+
+    private void maybeShowConflictWarning() {
+        java.util.Set<String> detected = knownConflictServicesEnabled();
+        java.util.Set<String> acknowledged = prefs.getStringSet(
+                Prefs.CONFLICT_WARNING_SERVICES, java.util.Collections.emptySet());
+        java.util.Set<String> newServices = new java.util.HashSet<>(detected);
+        newServices.removeAll(acknowledged);
+        if (newServices.isEmpty()) return;
+        java.util.Set<String> updatedAcknowledged = new java.util.HashSet<>(acknowledged);
+        updatedAcknowledged.addAll(newServices);
+        prefs.edit().putBoolean(Prefs.CONFLICT_WARNING_SHOWN, true)
+                .putStringSet(Prefs.CONFLICT_WARNING_SERVICES, updatedAcknowledged).apply();
+        new AlertDialog.Builder(this)
+                .setCustomTitle(centeredDialogTitle("Controller conflict detected"))
+                .setMessage("Another Thor volume-control service is enabled. Both apps may respond to the same volume or controller input, which can make brightness and volume change together.\n\nIf you want Thor's Lightning to take priority while the modifier is held, enable \"Suspend services during hold\" and choose the detected service. You can dismiss this notice and change the option later.")
+                .setPositiveButton("Got it", null)
                 .show();
     }
 

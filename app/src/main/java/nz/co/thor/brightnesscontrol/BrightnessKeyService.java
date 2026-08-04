@@ -2,10 +2,20 @@ package nz.co.thor.brightnesscontrol;
 
 import android.accessibilityservice.AccessibilityService;
 import android.content.SharedPreferences;
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
+import android.database.ContentObserver;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.PowerManager;
 import android.provider.Settings;
+import android.util.Log;
+import android.hardware.Sensor;
+import android.hardware.SensorEvent;
+import android.hardware.SensorEventListener;
+import android.hardware.SensorManager;
 import android.view.KeyEvent;
 import android.view.accessibility.AccessibilityEvent;
 import android.widget.Toast;
@@ -13,7 +23,139 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public class BrightnessKeyService extends AccessibilityService {
+    private static final String TAG = "ThorsLightningWake";
+    // Temporary diagnostic mode: verify that close writes zero and that the
+    // system does not restore brightness on open before re-enabling the ramp.
+    private static final boolean WAKE_ZERO_TEST_MODE = true;
     private final Handler handler = new Handler(Looper.getMainLooper());
+    private boolean wakePending;
+    private boolean wakeRampActive;
+    private int wakeTop = -1;
+    private int wakeBottom = -1;
+    private int wakeStep;
+    private long wakeStartedAt;
+    private final ContentObserver wakeBrightnessObserver = new ContentObserver(handler) {
+        @Override public void onChange(boolean selfChange) {
+            if (wakePending && !wakeRampActive && isScreenInteractive()) {
+                int current = readSystemInt(Settings.System.SCREEN_BRIGHTNESS, 0);
+                if (current > 0) writeTopZero();
+            }
+        }
+    };
+    private final Runnable dimGuard = new Runnable() {
+        @Override public void run() {
+            if (!wakePending || isScreenInteractive()) return;
+            writeTopZero();
+            handler.postDelayed(this, 10);
+        }
+    };
+    private final Runnable wakeZeroGuard = new Runnable() {
+        @Override public void run() {
+            if (!wakePending || wakeRampActive) return;
+            writeWakeBrightness(0, 0);
+            handler.postDelayed(this, 10);
+        }
+    };
+    private SensorManager sensorManager;
+    private Sensor hallSensor;
+    private float lastHallValue = Float.NaN;
+    private final SensorEventListener hallListener = new SensorEventListener() {
+        @Override public void onSensorChanged(SensorEvent event) {
+            if (event.values.length == 0) return;
+            float value = event.values[0];
+            if (Float.isNaN(lastHallValue)) {
+                lastHallValue = value;
+                return;
+            }
+            if (Math.abs(value - lastHallValue) > 0.1f) {
+                lastHallValue = value;
+                Log.d(TAG, "hall transition value=" + value);
+                if (Prefs.get(BrightnessKeyService.this).getBoolean(Prefs.GENTLE_WAKE, false)) {
+                    // The Hall transition precedes Android's display wake
+                    // restore, so clamp brightness before the visible flash.
+                    writeTopZero();
+                    setAynDisplayBrightness(4, 0);
+                }
+            }
+        }
+        @Override public void onAccuracyChanged(Sensor sensor, int accuracy) { }
+    };
+    private final BroadcastReceiver screenReceiver = new BroadcastReceiver() {
+        @Override public void onReceive(Context context, Intent intent) {
+            if (!Prefs.get(BrightnessKeyService.this).getBoolean(Prefs.GENTLE_WAKE, false)
+                    && !WAKE_ZERO_TEST_MODE) return;
+            if (Intent.ACTION_SCREEN_OFF.equals(intent.getAction())) {
+                SharedPreferences p = Prefs.get(BrightnessKeyService.this);
+                wakeTop = readSystemInt(Settings.System.SCREEN_BRIGHTNESS, 128);
+                wakeBottom = readBottomBrightness();
+                p.edit().putInt(Prefs.WAKE_TOP, wakeTop).putInt(Prefs.WAKE_BOTTOM, wakeBottom).apply();
+                wakePending = true;
+                handler.removeCallbacks(wakeRunnable);
+                // Keep the saved target, but leave the displays at a low level
+                // so Android cannot visibly restore the old brightness first.
+                writeWakeBrightness(0, 0);
+                wakeRampActive = false;
+                handler.postDelayed(() -> writeWakeBrightness(0, 0), 8);
+                handler.postDelayed(() -> writeWakeBrightness(0, 0), 24);
+                handler.removeCallbacks(dimGuard);
+                handler.post(dimGuard);
+            } else if (Intent.ACTION_SCREEN_ON.equals(intent.getAction()) && wakePending) {
+                wakeTop = pInt(Prefs.WAKE_TOP, wakeTop);
+                wakeBottom = pInt(Prefs.WAKE_BOTTOM, wakeBottom);
+                // Apply the dim starting point synchronously before scheduling
+                // the small, frequent ramp increments.
+                writeWakeBrightness(0, 0);
+                handler.removeCallbacks(dimGuard);
+                handler.removeCallbacks(wakeZeroGuard);
+                handler.post(wakeZeroGuard);
+                if (WAKE_ZERO_TEST_MODE) {
+                    // Keep enforcing zero after wake; otherwise Android may
+                    // restore the top panel level after our one-time write.
+                    wakeRampActive = false;
+                    handler.removeCallbacks(wakeZeroGuard);
+                    handler.post(wakeZeroGuard);
+                    Log.d(TAG, "zero-hold test: keeping brightness at zero after wake");
+                    return;
+                }
+                wakeStartedAt = android.os.SystemClock.uptimeMillis();
+                Log.d(TAG, "wake ramp start targetTop=" + wakeTop + " targetBottom=" + wakeBottom);
+                handler.removeCallbacks(wakeRunnable);
+                // Android may restore the previous brightness just after the
+                // screen-on broadcast. Hold the minimum briefly before rising.
+                handler.postDelayed(() -> writeWakeBrightness(0, 0), 8);
+                handler.postDelayed(() -> writeWakeBrightness(0, 0), 24);
+                handler.postDelayed(() -> writeWakeBrightness(0, 0), 100);
+                handler.postDelayed(() -> writeWakeBrightness(0, 0), 200);
+                handler.postDelayed(() -> writeWakeBrightness(0, 0), 300);
+                handler.postDelayed(() -> writeWakeBrightness(0, 0), 400);
+                handler.postDelayed(() -> {
+                    wakeStep = 1;
+                    wakeRampActive = true;
+                    handler.removeCallbacks(wakeZeroGuard);
+                    handler.post(wakeRunnable);
+                }, 10000);
+            }
+        }
+    };
+    private final Runnable wakeRunnable = new Runnable() {
+        @Override public void run() {
+            if (!wakePending || wakeTop < 0) return;
+            wakeStep++;
+            int duration = Math.max(100, Math.min(10000, pInt(Prefs.GENTLE_WAKE_DURATION, 1500)));
+            int totalSteps = Math.max(1, duration / 16);
+            // Ease in from black. The first part stays deliberately near zero,
+            // then rises smoothly toward the saved brightness without a flash.
+            float linear = Math.min(1f, wakeStep / (float) totalSteps);
+            float fraction = linear * linear * (3f - 2f * linear);
+            writeWakeBrightness((int) (wakeTop * fraction), (int) (wakeBottom * fraction));
+            if (fraction < 1f) handler.postDelayed(this, 16);
+            else {
+                wakePending = false;
+                Log.d(TAG, "wake ramp complete updates=" + wakeStep
+                        + " elapsedMs=" + (android.os.SystemClock.uptimeMillis() - wakeStartedAt));
+            }
+        }
+    };
     private boolean modifierDown;
     private boolean rootModifierDown;
     private boolean volumeUpDown;
@@ -119,7 +261,29 @@ public class BrightnessKeyService extends AccessibilityService {
     @Override
     protected void onServiceConnected() {
         super.onServiceConnected();
-        restoreConflictingService();
+        registerReceiver(screenReceiver, new IntentFilter(Intent.ACTION_SCREEN_OFF));
+        IntentFilter screenOn = new IntentFilter(Intent.ACTION_SCREEN_ON);
+        registerReceiver(screenReceiver, screenOn);
+        sensorManager = (SensorManager) getSystemService(SENSOR_SERVICE);
+        if (sensorManager != null) {
+            for (Sensor sensor : sensorManager.getSensorList(Sensor.TYPE_ALL)) {
+                if (sensor.getName().toLowerCase(java.util.Locale.ROOT).contains("hall effect")) {
+                    hallSensor = sensor;
+                    boolean registered = sensorManager.registerListener(hallListener, sensor, SensorManager.SENSOR_DELAY_FASTEST);
+                    Log.d(TAG, "hall sensor registered=" + registered + " name=" + sensor.getName());
+                    break;
+                }
+            }
+            if (hallSensor == null) Log.d(TAG, "no hall effect sensor found");
+        }
+        getContentResolver().registerContentObserver(
+                Settings.System.getUriFor(Settings.System.SCREEN_BRIGHTNESS), false,
+                wakeBrightnessObserver);
+        // Updating Android's enabled-service list can reconnect this service.
+        // Do not restore a conflict while that suspension is still active.
+        if (!Prefs.get(this).getBoolean(Prefs.SUSPEND_SERVICE_ACTIVE, false)) {
+            restoreConflictingService();
+        }
         rootInput = new RootInputMonitor(handler, new RootInputMonitor.Listener() {
             @Override public void onDirection(int direction) {
                 handleRootDirection(direction);
@@ -132,6 +296,30 @@ public class BrightnessKeyService extends AccessibilityService {
         SharedPreferences prefs = Prefs.get(this);
         prefs.registerOnSharedPreferenceChangeListener(rootPreferenceListener);
         refreshRootMonitor(prefs);
+    }
+
+    private int pInt(String key, int fallback) {
+        return Prefs.get(this).getInt(key, fallback);
+    }
+
+    private void writeWakeBrightness(int top, int bottom) {
+        try {
+            Settings.System.putInt(getContentResolver(), Settings.System.SCREEN_BRIGHTNESS_MODE,
+                    Settings.System.SCREEN_BRIGHTNESS_MODE_MANUAL);
+            // The top panel is controlled through Android's setting; the Thor
+            // display controller's panel ID is valid for the lower screen.
+            Settings.System.putInt(getContentResolver(), Settings.System.SCREEN_BRIGHTNESS,
+                    Math.max(0, top));
+            setAynDisplayBrightness(4, Math.max(0, bottom));
+        } catch (Exception ignored) { }
+    }
+
+    private void writeTopZero() {
+        try {
+            Settings.System.putInt(getContentResolver(), Settings.System.SCREEN_BRIGHTNESS_MODE,
+                    Settings.System.SCREEN_BRIGHTNESS_MODE_MANUAL);
+            Settings.System.putInt(getContentResolver(), Settings.System.SCREEN_BRIGHTNESS, 0);
+        } catch (Exception ignored) { }
     }
 
     private void refreshRootMonitor(SharedPreferences prefs) {
@@ -305,7 +493,12 @@ public class BrightnessKeyService extends AccessibilityService {
 
     @Override
     public void onInterrupt() {
-        restoreConflictingService();
+        // Accessibility may interrupt/reconnect while the enabled-service
+        // list is being edited for a modifier hold. Keep the selected conflict
+        // suspended until the modifier is actually released.
+        if (!Prefs.get(this).getBoolean(Prefs.SUSPEND_SERVICE_ACTIVE, false)) {
+            restoreConflictingService();
+        }
         modifierDown = false;
         volumeUpDown = false;
         volumeDownDown = false;
@@ -316,6 +509,9 @@ public class BrightnessKeyService extends AccessibilityService {
     public void onDestroy() {
         restoreConflictingService();
         handler.removeCallbacksAndMessages(null);
+        try { unregisterReceiver(screenReceiver); } catch (Exception ignored) { }
+        if (sensorManager != null) sensorManager.unregisterListener(hallListener);
+        getContentResolver().unregisterContentObserver(wakeBrightnessObserver);
         Prefs.get(this).unregisterOnSharedPreferenceChangeListener(rootPreferenceListener);
         if (rootInput != null) rootInput.stop();
         displayExecutor.shutdownNow();
@@ -326,8 +522,13 @@ public class BrightnessKeyService extends AccessibilityService {
         SharedPreferences p = Prefs.get(this);
         if (!p.getBoolean(Prefs.SUSPEND_SERVICE, false)) return;
         java.util.Set<String> components = selectedServices(p);
-        if (!components.isEmpty() && RootAccessibilityController.setSuspended(this, components, true)) {
+        if (!components.isEmpty()) {
+            // Mark active before changing the service list; the write can
+            // trigger an immediate service reconnect.
             p.edit().putBoolean(Prefs.SUSPEND_SERVICE_ACTIVE, true).apply();
+            if (!RootAccessibilityController.setSuspended(this, components, true)) {
+                p.edit().putBoolean(Prefs.SUSPEND_SERVICE_ACTIVE, false).apply();
+            }
         }
     }
 
