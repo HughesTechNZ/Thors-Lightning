@@ -39,6 +39,7 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 public class MainActivity extends Activity {
+    private boolean suppressGentleWakeListener;
     private SharedPreferences prefs;
     private TextView permissionStatus;
     private TextView captureMessage;
@@ -288,7 +289,10 @@ public class MainActivity extends Activity {
         reserveBox.addView(consumeHint, margins(0, 0, 0, 0));
         addBehaviourControls(behaviour);
         setContentView(root);
-        root.post(this::maybeShowSetupGuide);
+        root.post(() -> {
+            maybeShowSetupGuide();
+            root.postDelayed(this::maybeShowConflictWarning, 350);
+        });
     }
 
     private void addRootControls(LinearLayout parent) {
@@ -322,6 +326,7 @@ public class MainActivity extends Activity {
         rootAxes.setLayoutParams(new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         rootBox.addView(rootAxes, matchMargins(0, 12, 0, 4));
+        updateRootCheckVisual(rootCheckFirst);
 
 
         checkRootButton = button("Check root access");
@@ -344,6 +349,11 @@ public class MainActivity extends Activity {
         suspend.setLayoutParams(new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         rootBox.addView(suspend, matchMargins(0, 2, 0, 0));
+        suspend.setOnCheckedChangeListener((button, checked) -> {
+            prefs.edit().putBoolean(Prefs.SUSPEND_SERVICE, checked).apply();
+            updateRootCheckVisual(rootCheckFirst);
+            if (checked) autoConfigureVolumeLinkSuspension();
+        });
         TextView suspendHint = text("Selected accessibility services are temporarily disabled while the modifier is held and restored when released. Known conflicts are auto-enabled when root is enabled.", 11, false);
         suspendHint.setTextColor(themeColor(android.R.attr.textColorSecondary));
         rootBox.addView(suspendHint, margins(0, 1, 0, 2));
@@ -548,6 +558,9 @@ public class MainActivity extends Activity {
         RadioButton both = radio("Both", Prefs.TARGET_BOTH);
         RadioButton top = radio("Top", Prefs.TARGET_TOP);
         RadioButton bottom = radio("Bottom", Prefs.TARGET_BOTTOM);
+        both.setTextSize(13);
+        top.setTextSize(13);
+        bottom.setTextSize(13);
         targets.addView(both, new RadioGroup.LayoutParams(0,
                 ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         targets.addView(top, new RadioGroup.LayoutParams(0,
@@ -563,10 +576,10 @@ public class MainActivity extends Activity {
                 prefs.edit().putInt(Prefs.TARGET, (Integer) selected.getTag()).apply();
             }
         });
-        behaviour.addView(targets, matchMargins(0, 0, 0, 10));
+        behaviour.addView(targets, matchMargins(0, 0, 0, 0));
 
         behaviour.addView(section("Brightness step"));
-        stepLabel = text("", 16, true);
+        stepLabel = text("", 15, true);
         behaviour.addView(stepLabel);
         SeekBar step = new SeekBar(this);
         step.setMax(24);
@@ -588,10 +601,10 @@ public class MainActivity extends Activity {
 
         Switch linkHold = new Switch(this);
         linkHold.setText("Link hold step to press step");
-        linkHold.setTextSize(13);
+        linkHold.setTextSize(12);
         linkHold.setChecked(prefs.getBoolean(Prefs.LINK_HOLD_STEP, true));
         behaviour.addView(linkHold, margins(0, 0, 0, 0));
-        TextView holdLabel = text("Hold: " + prefs.getInt(Prefs.HOLD_STEP, savedPress) + "% per repeat", 14, true);
+        TextView holdLabel = text("Hold: " + prefs.getInt(Prefs.HOLD_STEP, savedPress) + "% per repeat", 13, true);
         behaviour.addView(holdLabel);
         SeekBar hold = new SeekBar(this);
         hold.setMax(24);
@@ -617,12 +630,12 @@ public class MainActivity extends Activity {
             }
         });
 
-        behaviour.addView(section("Hold repeat speed"), margins(0, 8, 0, 0));
-        repeatLabel = text("", 16, true);
+        behaviour.addView(section("Hold repeat speed"), margins(0, 2, 0, 0));
+        repeatLabel = text("", 15, true);
         behaviour.addView(repeatLabel);
         SeekBar repeat = new SeekBar(this);
         repeat.setMax(18);
-        int savedDelay = prefs.getInt(Prefs.REPEAT_DELAY, 180);
+        int savedDelay = prefs.getInt(Prefs.REPEAT_DELAY, 150);
         repeat.setProgress(Math.max(0, Math.min(18, (savedDelay - 100) / 50)));
         updateRepeatLabel(100 + repeat.getProgress() * 50);
         repeat.setOnSeekBarChangeListener(new SimpleSeekListener() {
@@ -634,19 +647,37 @@ public class MainActivity extends Activity {
         });
         behaviour.addView(repeat);
 
-        Space safetySpacer = new Space(this);
-        behaviour.addView(safetySpacer, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
-
-        safetyLabel = text("", 12, false);
-        safetyLabel.setTextColor(Color.rgb(80, 60, 20));
-        GradientDrawable safetyBackground = new GradientDrawable();
-        safetyBackground.setColor(Color.rgb(255, 246, 210));
-        safetyBackground.setCornerRadius(dp(8));
-        safetyLabel.setBackground(safetyBackground);
-        safetyLabel.setPadding(dp(10), dp(7), dp(10), dp(7));
-        updateSafetyText();
-        behaviour.addView(safetyLabel, margins(0, 0, 0, 6));
+        LinearLayout gentleBox = new LinearLayout(this);
+        gentleBox.setOrientation(LinearLayout.VERTICAL);
+        gentleBox.setPadding(dp(8), dp(6), dp(8), dp(6));
+        GradientDrawable gentleBackground = new GradientDrawable();
+        gentleBackground.setColor(Color.argb(45, 190, 165, 235));
+        gentleBackground.setCornerRadius(dp(8));
+        gentleBackground.setStroke(dp(1), Color.argb(90, 190, 165, 235));
+        gentleBox.setBackground(gentleBackground);
+        behaviour.addView(gentleBox, matchMargins(0, 20, 0, 0));
+        TextView gentleTitle = text("Sleep/Wake brightness", 14, true);
+        gentleTitle.setTextColor(Color.rgb(190, 165, 235));
+        gentleBox.addView(gentleTitle, margins(0, 0, 0, 0));
+        Switch gentleWake = new Switch(this);
+        gentleWake.setText("Enable sleep/wake brightness");
+        gentleWake.setTextSize(12);
+        gentleWake.setTextColor(Color.WHITE);
+        gentleWake.setChecked(prefs.getBoolean(Prefs.GENTLE_WAKE, false));
+        gentleWake.setOnCheckedChangeListener((button, checked) -> {
+            if (suppressGentleWakeListener) return;
+            if (checked) showGentleWakeSettings(gentleWake);
+            else prefs.edit().putBoolean(Prefs.GENTLE_WAKE, false).apply();
+        });
+        gentleBox.addView(gentleWake, matchMargins(0, 0, 0, 0));
+        Button configureWake = new Button(this);
+        configureWake.setText("Configure");
+        configureWake.setAllCaps(false);
+        configureWake.setOnClickListener(v -> showGentleWakeSettings(gentleWake));
+        gentleBox.addView(configureWake, matchMargins(0, 0, 0, 0));
+        TextView gentleHint = text("Configure the black hold, ramp, and long-close reset.", 10, false);
+        gentleHint.setTextColor(themeColor(android.R.attr.textColorSecondary));
+        gentleBox.addView(gentleHint, margins(0, 0, 0, 0));
 
     }
 
@@ -688,6 +719,193 @@ public class MainActivity extends Activity {
         recordParams.gravity = Gravity.CENTER_VERTICAL;
         row.addView(record, recordParams);
         parent.addView(row, matchMargins(0, 3, 0, 3));
+    }
+
+    private void updateRootCheckVisual(Button button) {
+        boolean inferred = prefs.getBoolean(Prefs.ROOT_AXES, false)
+                || prefs.getBoolean(Prefs.SUSPEND_SERVICE, false);
+        button.setText(inferred ? "Check root access - Enabled" : "Check root access");
+        button.setBackgroundTintList(ColorStateList.valueOf(inferred
+                ? Color.rgb(70, 130, 75) : Color.rgb(95, 95, 98)));
+    }
+
+    private void showGentleWakeSettings(Switch gentleWake) {
+        boolean wasEnabled = gentleWake.isChecked();
+        int saved = Math.max(100, Math.min(10000,
+                prefs.getInt(Prefs.GENTLE_WAKE_DURATION, 5000)));
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setPadding(dp(24), dp(4), dp(24), 0);
+        TextView description = text("After the Thor wakes, both screens briefly stay dark, then ramp back to the brightness levels saved before closing or putting the Thor to sleep. The optional long-close reset can set a default brightness after a chosen amount of time.", 14, false);
+        content.addView(description, matchMargins(0, 0, 0, 4));
+        TextView value = text("Transition: " + formatWakeDuration(saved), 15, true);
+        content.addView(value, matchMargins(0, 0, 0, 0));
+        content.addView(text("How long the brightness takes to rise after the black hold.", 12, false), matchMargins(0, 0, 0, 2));
+        SeekBar slider = new SeekBar(this);
+        slider.setMax(99);
+        slider.setProgress((saved / 100) - 1);
+        slider.setOnSeekBarChangeListener(new SimpleSeekListener() {
+            @Override public void onProgressChanged(SeekBar bar, int progress, boolean fromUser) {
+                value.setText("Transition: " + formatWakeDuration((progress + 1) * 100));
+            }
+        });
+        content.addView(slider, matchMargins(0, 0, 0, 0));
+        int holdMs = Math.max(100, Math.min(5000, prefs.getInt(Prefs.WAKE_HOLD_DURATION, 1000)));
+        TextView holdValue = text("Black hold: " + formatWakeDuration(holdMs), 15, true);
+        content.addView(holdValue, matchMargins(0, 6, 0, 0));
+        content.addView(text("Keeps both screens dark after wake before the ramp starts.", 12, false), matchMargins(0, 0, 0, 2));
+        SeekBar holdSlider = new SeekBar(this);
+        holdSlider.setMax(49);
+        holdSlider.setProgress((holdMs / 100) - 1);
+        holdSlider.setOnSeekBarChangeListener(new SimpleSeekListener() {
+            @Override public void onProgressChanged(SeekBar bar, int progress, boolean fromUser) {
+                holdValue.setText("Black hold: " + formatWakeDuration((progress + 1) * 100));
+            }
+        });
+        content.addView(holdSlider, matchMargins(0, 0, 0, 0));
+        // Present controls in the order the wake sequence actually occurs.
+        View transitionLabel = content.getChildAt(1);
+        View transitionHelp = content.getChildAt(2);
+        View transitionSlider = content.getChildAt(3);
+        View holdHelp = content.getChildAt(5);
+        content.removeViews(1, 6);
+        content.addView(holdValue);
+        content.addView(holdHelp);
+        content.addView(holdSlider);
+        content.addView(transitionLabel);
+        content.addView(transitionHelp);
+        content.addView(transitionSlider);
+        int resetMinutes = Math.max(0, Math.min(1440,
+                (int) (prefs.getLong(Prefs.WAKE_RESET_TIMEOUT, 120L * 60L * 1000L) / 60000L)));
+        Switch resetEnabled = new Switch(this);
+        resetEnabled.setText("Reset after long close");
+        resetEnabled.setTextSize(14);
+        resetEnabled.setChecked(prefs.getBoolean(Prefs.WAKE_RESET_ENABLED, false));
+        content.addView(resetEnabled, matchMargins(0, 8, 0, 0));
+        TextView resetValue = text("Long-close reset: after " + formatLongClose(resetMinutes), 15, true);
+        content.addView(resetValue, matchMargins(0, 6, 0, 0));
+        TextView resetHelp = text("After this time closed, use the reset brightness instead of saved levels.", 12, false);
+        content.addView(resetHelp, matchMargins(0, 0, 0, 2));
+        SeekBar resetTime = new SeekBar(this);
+        resetTime.setMax(152);
+        resetTime.setProgress(longCloseProgress(resetMinutes));
+        resetTime.setOnSeekBarChangeListener(new SimpleSeekListener() {
+            @Override public void onProgressChanged(SeekBar bar, int progress, boolean fromUser) {
+                resetValue.setText("Long-close reset: after " + formatLongClose(longCloseMinutes(progress)));
+            }
+        });
+        content.addView(resetTime, matchMargins(0, 0, 0, 0));
+        TextView resetBrightness = text("Reset brightness: 50%", 15, true);
+        content.addView(resetBrightness, matchMargins(0, 4, 0, 0));
+        TextView resetBrightnessHelp = text("Starting level used after a long close.", 12, false);
+        content.addView(resetBrightnessHelp, matchMargins(0, 0, 0, 2));
+        SeekBar resetLevel = new SeekBar(this);
+        resetLevel.setMax(254);
+        resetLevel.setProgress(prefs.getInt(Prefs.WAKE_RESET_BRIGHTNESS, 128) - 1);
+        resetLevel.setOnSeekBarChangeListener(new SimpleSeekListener() {
+            @Override public void onProgressChanged(SeekBar bar, int progress, boolean fromUser) {
+                resetBrightness.setText("Reset brightness: " + Math.round((progress + 1) * 100f / 255f) + "%");
+            }
+        });
+        content.addView(resetLevel, matchMargins(0, 0, 0, 0));
+        LinearLayout holdBox = settingBox();
+        moveIntoBox(content, holdBox, holdValue, holdHelp, holdSlider);
+        LinearLayout transitionBox = settingBox();
+        moveIntoBox(content, transitionBox, transitionLabel, transitionHelp, transitionSlider);
+        LinearLayout resetBox = settingBox();
+        moveIntoBox(content, resetBox, resetEnabled, resetValue, resetHelp, resetTime,
+                resetBrightness, resetBrightnessHelp, resetLevel);
+        LinearLayout wakeBox = settingBox();
+        while (holdBox.getChildCount() > 0) {
+            View child = holdBox.getChildAt(0);
+            holdBox.removeViewAt(0);
+            wakeBox.addView(child);
+        }
+        while (transitionBox.getChildCount() > 0) {
+            View child = transitionBox.getChildAt(0);
+            transitionBox.removeViewAt(0);
+            wakeBox.addView(child);
+        }
+        wakeBox.setPadding(dp(8), dp(8), dp(8), dp(8));
+        content.addView(wakeBox, 1);
+        content.addView(resetBox, matchMargins(0, 8, 0, 0));
+        AlertDialog wakeDialog = new AlertDialog.Builder(this)
+                .setCustomTitle(centeredDialogTitle("Sleep/wake brightness"))
+                .setView(content)
+                .setPositiveButton("Enable", (dialog, which) -> {
+                    suppressGentleWakeListener = true;
+                    gentleWake.setChecked(true);
+                    suppressGentleWakeListener = false;
+                    saveGentleWake((slider.getProgress() + 1) * 100,
+                            (holdSlider.getProgress() + 1) * 100,
+                            longCloseMinutes(resetTime.getProgress()) * 60000L, resetLevel.getProgress() + 1,
+                            resetEnabled.isChecked());
+                })
+                .setNegativeButton("Cancel", (dialog, which) -> gentleWake.setChecked(wasEnabled))
+                .setOnCancelListener(dialog -> gentleWake.setChecked(wasEnabled))
+                .create();
+        wakeDialog.setOnShowListener(d -> wakeDialog.getWindow().getDecorView().setSystemUiVisibility(
+                View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                        | View.SYSTEM_UI_FLAG_FULLSCREEN | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                        | View.SYSTEM_UI_FLAG_LAYOUT_STABLE));
+        wakeDialog.show();
+        if (wakeDialog.getWindow() != null) {
+            GradientDrawable dialogBackground = new GradientDrawable();
+            dialogBackground.setColor(themeColor(android.R.attr.colorBackground));
+            dialogBackground.setCornerRadius(dp(14));
+            wakeDialog.getWindow().setBackgroundDrawable(dialogBackground);
+            wakeDialog.getWindow().setLayout((int) (getResources().getDisplayMetrics().widthPixels * 0.96f),
+                    ViewGroup.LayoutParams.WRAP_CONTENT);
+        }
+        wakeDialog.getButton(AlertDialog.BUTTON_POSITIVE).setText(wasEnabled ? "Save" : "Enable");
+    }
+
+    private String formatWakeDuration(int durationMs) {
+        return String.format(java.util.Locale.ROOT, "%.1f seconds", durationMs / 1000f);
+    }
+
+    private String formatLongClose(int minutes) {
+        if (minutes < 60) return String.format(java.util.Locale.ROOT, "%02d Minutes", minutes);
+        return String.format(java.util.Locale.ROOT, "%02d hour%s %02d Minutes", minutes / 60,
+                minutes / 60 == 1 ? "" : "s",
+                minutes % 60);
+    }
+
+    private int longCloseMinutes(int progress) {
+        return progress <= 60 ? progress : 60 + (progress - 60) * 15;
+    }
+
+    private int longCloseProgress(int minutes) {
+        return minutes <= 60 ? minutes : 60 + Math.round((minutes - 60) / 15f);
+    }
+
+    private LinearLayout settingBox() {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(8), dp(4), dp(8), dp(4));
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(Color.argb(35, 190, 165, 235));
+        bg.setCornerRadius(dp(8));
+        bg.setStroke(dp(1), Color.argb(90, 190, 165, 235));
+        box.setBackground(bg);
+        return box;
+    }
+
+    private void moveIntoBox(LinearLayout parent, LinearLayout box, View... views) {
+        for (View view : views) {
+            parent.removeView(view);
+            box.addView(view);
+        }
+    }
+
+    private void saveGentleWake(int duration, int holdDuration, long resetTimeout, int resetBrightness,
+                                boolean resetEnabled) {
+        prefs.edit().putBoolean(Prefs.GENTLE_WAKE, true)
+                .putInt(Prefs.GENTLE_WAKE_DURATION, duration)
+                .putInt(Prefs.WAKE_HOLD_DURATION, holdDuration)
+                .putLong(Prefs.WAKE_RESET_TIMEOUT, resetTimeout)
+                .putInt(Prefs.WAKE_RESET_BRIGHTNESS, resetBrightness)
+                .putBoolean(Prefs.WAKE_RESET_ENABLED, resetEnabled).apply();
     }
 
     private boolean requiredPermissionsReady() {
@@ -1054,6 +1272,19 @@ public class MainActivity extends Activity {
         if (enabledSwitch != null) {
             enabledSwitch.setChecked(prefs.getBoolean(Prefs.ENABLED, true));
         }
+        // Refresh known conflict services when the app returns to the
+        // foreground. This also catches ThorVolumeLink being enabled after
+        // the initial root setup.
+        if (prefs.getBoolean(Prefs.ROOT_AXES, false)
+                || prefs.getBoolean(Prefs.SUSPEND_SERVICE, false)) {
+            autoConfigureVolumeLinkSuspension();
+            new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                if (!isFinishing() && (prefs.getBoolean(Prefs.ROOT_AXES, false)
+                        || prefs.getBoolean(Prefs.SUSPEND_SERVICE, false))) {
+                    autoConfigureVolumeLinkSuspension();
+                }
+            }, 1500);
+        }
         if (prefs.getBoolean(Prefs.AWAITING_STEP_TWO, false)
                 && Settings.System.canWrite(this) && !isAccessibilityServiceEnabled()) {
             prefs.edit().putBoolean(Prefs.AWAITING_STEP_TWO, false).apply();
@@ -1164,8 +1395,10 @@ public class MainActivity extends Activity {
         new AlertDialog.Builder(this)
                 .setCustomTitle(centeredDialogTitle("Welcome to Thor's Lightning! \u26A1"))
                 .setMessage("This app lets you use the AYN Thor's controller inputs to adjust the screen brightness!\n\nTo get started, tap \"Set up permissions\" to allow the app to function.")
-                .setPositiveButton("Got it", (dialog, which) ->
-                        prefs.edit().putBoolean(Prefs.SETUP_GUIDE_SHOWN, true).apply())
+                .setPositiveButton("Got it", (dialog, which) -> {
+                    prefs.edit().putBoolean(Prefs.SETUP_GUIDE_SHOWN, true).apply();
+                    new Handler(Looper.getMainLooper()).postDelayed(this::maybeShowConflictWarning, 250);
+                })
                 .show();
     }
 
@@ -1176,6 +1409,41 @@ public class MainActivity extends Activity {
                 .setPositiveButton("Open Accessibility", (dialog, which) ->
                         startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)))
                 .setNegativeButton("Later", null)
+                .show();
+    }
+
+    private java.util.Set<String> knownConflictServicesEnabled() {
+        java.util.Set<String> matches = new java.util.HashSet<>();
+        String enabled = Settings.Secure.getString(getContentResolver(),
+                Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES);
+        if (enabled == null) return matches;
+        String ours = getPackageName().toLowerCase(java.util.Locale.ROOT);
+        for (String id : enabled.split(":")) {
+            String lower = id.toLowerCase(java.util.Locale.ROOT);
+            if (!lower.startsWith(ours + "/")
+                    && (lower.contains("thorvolume") || lower.contains("volumecontrol"))) {
+                matches.add(id);
+            }
+        }
+        return matches;
+    }
+
+    private void maybeShowConflictWarning() {
+        if (!prefs.getBoolean(Prefs.SETUP_GUIDE_SHOWN, false)) return;
+        java.util.Set<String> detected = knownConflictServicesEnabled();
+        java.util.Set<String> acknowledged = prefs.getStringSet(
+                Prefs.CONFLICT_WARNING_SERVICES, java.util.Collections.emptySet());
+        java.util.Set<String> newServices = new java.util.HashSet<>(detected);
+        newServices.removeAll(acknowledged);
+        if (newServices.isEmpty()) return;
+        java.util.Set<String> updatedAcknowledged = new java.util.HashSet<>(acknowledged);
+        updatedAcknowledged.addAll(newServices);
+        prefs.edit().putBoolean(Prefs.CONFLICT_WARNING_SHOWN, true)
+                .putStringSet(Prefs.CONFLICT_WARNING_SERVICES, updatedAcknowledged).apply();
+        new AlertDialog.Builder(this)
+                .setCustomTitle(centeredDialogTitle("Controller conflict detected"))
+                .setMessage("Another Thor volume-control service is enabled. Both apps may respond to the same volume or controller input, which can make brightness and volume change together.\n\nRoot access is required for \"Suspend services during hold\". If you want Thor's Lightning to take priority while the modifier is held, enable \"Suspend services during hold\" and choose the detected service. You can dismiss this notice and change the option later.")
+                .setPositiveButton("Got it", null)
                 .show();
     }
 
