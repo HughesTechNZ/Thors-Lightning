@@ -310,6 +310,7 @@ public class BrightnessKeyService extends AccessibilityService {
             // display controller's panel ID is valid for the lower screen.
             Settings.System.putInt(getContentResolver(), Settings.System.SCREEN_BRIGHTNESS,
                     Math.max(0, top));
+            setAynDisplayBrightness(0, Math.max(0, top));
             setAynDisplayBrightness(4, Math.max(0, bottom));
         } catch (Exception ignored) { }
     }
@@ -319,6 +320,7 @@ public class BrightnessKeyService extends AccessibilityService {
             Settings.System.putInt(getContentResolver(), Settings.System.SCREEN_BRIGHTNESS_MODE,
                     Settings.System.SCREEN_BRIGHTNESS_MODE_MANUAL);
             Settings.System.putInt(getContentResolver(), Settings.System.SCREEN_BRIGHTNESS, 0);
+            setAynDisplayBrightness(0, 0);
         } catch (Exception ignored) { }
     }
 
