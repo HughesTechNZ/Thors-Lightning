@@ -39,6 +39,7 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 public class MainActivity extends Activity {
+    private boolean suppressGentleWakeListener;
     private SharedPreferences prefs;
     private TextView permissionStatus;
     private TextView captureMessage;
@@ -325,6 +326,7 @@ public class MainActivity extends Activity {
         rootAxes.setLayoutParams(new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         rootBox.addView(rootAxes, matchMargins(0, 12, 0, 4));
+        updateRootCheckVisual(rootCheckFirst);
 
 
         checkRootButton = button("Check root access");
@@ -347,6 +349,11 @@ public class MainActivity extends Activity {
         suspend.setLayoutParams(new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         rootBox.addView(suspend, matchMargins(0, 2, 0, 0));
+        suspend.setOnCheckedChangeListener((button, checked) -> {
+            prefs.edit().putBoolean(Prefs.SUSPEND_SERVICE, checked).apply();
+            updateRootCheckVisual(rootCheckFirst);
+            if (checked) autoConfigureVolumeLinkSuspension();
+        });
         TextView suspendHint = text("Selected accessibility services are temporarily disabled while the modifier is held and restored when released. Known conflicts are auto-enabled when root is enabled.", 11, false);
         suspendHint.setTextColor(themeColor(android.R.attr.textColorSecondary));
         rootBox.addView(suspendHint, margins(0, 1, 0, 2));
@@ -652,14 +659,20 @@ public class MainActivity extends Activity {
         TextView gentleTitle = text("Wake behavior", 13, true);
         gentleBox.addView(gentleTitle, margins(0, 0, 0, 0));
         Switch gentleWake = new Switch(this);
-        gentleWake.setText("Gentle brightness on wake");
+        gentleWake.setText("Sleep/Wake brightness");
         gentleWake.setTextSize(12);
         gentleWake.setChecked(prefs.getBoolean(Prefs.GENTLE_WAKE, false));
         gentleWake.setOnCheckedChangeListener((button, checked) -> {
+            if (suppressGentleWakeListener) return;
             if (checked) showGentleWakeSettings(gentleWake);
             else prefs.edit().putBoolean(Prefs.GENTLE_WAKE, false).apply();
         });
         gentleBox.addView(gentleWake, matchMargins(0, 0, 0, 0));
+        Button configureWake = new Button(this);
+        configureWake.setText("Configure");
+        configureWake.setAllCaps(false);
+        configureWake.setOnClickListener(v -> showGentleWakeSettings(gentleWake));
+        gentleBox.addView(configureWake, matchMargins(0, 0, 0, 0));
         TextView gentleHint = text("Tap to choose wake-up speed.", 10, false);
         gentleHint.setTextColor(themeColor(android.R.attr.textColorSecondary));
         gentleBox.addView(gentleHint, margins(0, 0, 0, 0));
@@ -720,16 +733,26 @@ public class MainActivity extends Activity {
         parent.addView(row, matchMargins(0, 3, 0, 3));
     }
 
+    private void updateRootCheckVisual(Button button) {
+        boolean inferred = prefs.getBoolean(Prefs.ROOT_AXES, false)
+                || prefs.getBoolean(Prefs.SUSPEND_SERVICE, false);
+        button.setText(inferred ? "Check root access - Enabled" : "Check root access");
+        button.setBackgroundTintList(ColorStateList.valueOf(inferred
+                ? Color.rgb(70, 130, 75) : Color.rgb(95, 95, 98)));
+    }
+
     private void showGentleWakeSettings(Switch gentleWake) {
+        boolean wasEnabled = gentleWake.isChecked();
         int saved = Math.max(100, Math.min(10000,
-                prefs.getInt(Prefs.GENTLE_WAKE_DURATION, 1500)));
+                prefs.getInt(Prefs.GENTLE_WAKE_DURATION, 5000)));
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
         content.setPadding(dp(24), dp(4), dp(24), 0);
-        TextView description = text("When the Thor wakes after the screens were off, brightness rises gradually to reduce glare.", 14, false);
+        TextView description = text("After the Thor wakes, both screens briefly stay dark, then ramp back to the brightness levels saved before closing or putting the Thor to sleep. The optional long-close reset can set a default brightness after a chosen amount of time.", 14, false);
         content.addView(description, matchMargins(0, 0, 0, 4));
         TextView value = text("Transition: " + formatWakeDuration(saved), 15, true);
         content.addView(value, matchMargins(0, 0, 0, 0));
+        content.addView(text("How long the brightness takes to rise after the black hold.", 12, false), matchMargins(0, 0, 0, 2));
         SeekBar slider = new SeekBar(this);
         slider.setMax(99);
         slider.setProgress((saved / 100) - 1);
@@ -739,11 +762,12 @@ public class MainActivity extends Activity {
             }
         });
         content.addView(slider, matchMargins(0, 0, 0, 0));
-        int holdMs = Math.max(100, Math.min(10000, prefs.getInt(Prefs.WAKE_HOLD_DURATION, 1000)));
+        int holdMs = Math.max(100, Math.min(5000, prefs.getInt(Prefs.WAKE_HOLD_DURATION, 5000)));
         TextView holdValue = text("Black hold: " + formatWakeDuration(holdMs), 15, true);
         content.addView(holdValue, matchMargins(0, 6, 0, 0));
+        content.addView(text("Keeps both screens dark after wake before the ramp starts.", 12, false), matchMargins(0, 0, 0, 2));
         SeekBar holdSlider = new SeekBar(this);
-        holdSlider.setMax(99);
+        holdSlider.setMax(49);
         holdSlider.setProgress((holdMs / 100) - 1);
         holdSlider.setOnSeekBarChangeListener(new SimpleSeekListener() {
             @Override public void onProgressChanged(SeekBar bar, int progress, boolean fromUser) {
@@ -751,21 +775,42 @@ public class MainActivity extends Activity {
             }
         });
         content.addView(holdSlider, matchMargins(0, 0, 0, 0));
-        int resetMinutes = Math.max(1, Math.min(240,
-                (int) (prefs.getLong(Prefs.WAKE_RESET_TIMEOUT, 30L * 60L * 1000L) / 60000L)));
-        TextView resetValue = text("Long-close reset: after " + resetMinutes + " minutes", 15, true);
+        // Present controls in the order the wake sequence actually occurs.
+        View transitionLabel = content.getChildAt(1);
+        View transitionHelp = content.getChildAt(2);
+        View transitionSlider = content.getChildAt(3);
+        View holdHelp = content.getChildAt(5);
+        content.removeViews(1, 6);
+        content.addView(holdValue);
+        content.addView(holdHelp);
+        content.addView(holdSlider);
+        content.addView(transitionLabel);
+        content.addView(transitionHelp);
+        content.addView(transitionSlider);
+        int resetMinutes = Math.max(0, Math.min(1440,
+                (int) (prefs.getLong(Prefs.WAKE_RESET_TIMEOUT, 120L * 60L * 1000L) / 60000L)));
+        Switch resetEnabled = new Switch(this);
+        resetEnabled.setText("Reset after long close");
+        resetEnabled.setTextSize(14);
+        resetEnabled.setChecked(prefs.getBoolean(Prefs.WAKE_RESET_ENABLED, false));
+        content.addView(resetEnabled, matchMargins(0, 8, 0, 0));
+        TextView resetValue = text("Long-close reset: after " + formatLongClose(resetMinutes), 15, true);
         content.addView(resetValue, matchMargins(0, 6, 0, 0));
+        TextView resetHelp = text("After this time closed, use the reset brightness instead of saved levels.", 12, false);
+        content.addView(resetHelp, matchMargins(0, 0, 0, 2));
         SeekBar resetTime = new SeekBar(this);
-        resetTime.setMax(239);
-        resetTime.setProgress(resetMinutes - 1);
+        resetTime.setMax(152);
+        resetTime.setProgress(longCloseProgress(resetMinutes));
         resetTime.setOnSeekBarChangeListener(new SimpleSeekListener() {
             @Override public void onProgressChanged(SeekBar bar, int progress, boolean fromUser) {
-                resetValue.setText("Long-close reset: after " + (progress + 1) + " minutes");
+                resetValue.setText("Long-close reset: after " + formatLongClose(longCloseMinutes(progress)));
             }
         });
         content.addView(resetTime, matchMargins(0, 0, 0, 0));
         TextView resetBrightness = text("Reset brightness: 50%", 15, true);
         content.addView(resetBrightness, matchMargins(0, 4, 0, 0));
+        TextView resetBrightnessHelp = text("Starting level used after a long close.", 12, false);
+        content.addView(resetBrightnessHelp, matchMargins(0, 0, 0, 2));
         SeekBar resetLevel = new SeekBar(this);
         resetLevel.setMax(254);
         resetLevel.setProgress(prefs.getInt(Prefs.WAKE_RESET_BRIGHTNESS, 128) - 1);
@@ -775,27 +820,104 @@ public class MainActivity extends Activity {
             }
         });
         content.addView(resetLevel, matchMargins(0, 0, 0, 0));
-        new AlertDialog.Builder(this)
-                .setCustomTitle(centeredDialogTitle("Gentle brightness on wake"))
+        LinearLayout holdBox = settingBox();
+        moveIntoBox(content, holdBox, holdValue, holdHelp, holdSlider);
+        LinearLayout transitionBox = settingBox();
+        moveIntoBox(content, transitionBox, transitionLabel, transitionHelp, transitionSlider);
+        LinearLayout resetBox = settingBox();
+        moveIntoBox(content, resetBox, resetEnabled, resetValue, resetHelp, resetTime,
+                resetBrightness, resetBrightnessHelp, resetLevel);
+        LinearLayout wakeBox = settingBox();
+        while (holdBox.getChildCount() > 0) {
+            View child = holdBox.getChildAt(0);
+            holdBox.removeViewAt(0);
+            wakeBox.addView(child);
+        }
+        while (transitionBox.getChildCount() > 0) {
+            View child = transitionBox.getChildAt(0);
+            transitionBox.removeViewAt(0);
+            wakeBox.addView(child);
+        }
+        wakeBox.setPadding(dp(8), dp(8), dp(8), dp(8));
+        content.addView(wakeBox, 1);
+        content.addView(resetBox, matchMargins(0, 8, 0, 0));
+        AlertDialog wakeDialog = new AlertDialog.Builder(this)
+                .setCustomTitle(centeredDialogTitle("Sleep/wake brightness"))
                 .setView(content)
-                .setPositiveButton("Enable", (dialog, which) -> saveGentleWake((slider.getProgress() + 1) * 100,
-                        (holdSlider.getProgress() + 1) * 100,
-                        (resetTime.getProgress() + 1) * 60000L, resetLevel.getProgress() + 1))
-                .setNegativeButton("Cancel", (dialog, which) -> gentleWake.setChecked(false))
-                .setOnCancelListener(dialog -> gentleWake.setChecked(false))
-                .show();
+                .setPositiveButton("Enable", (dialog, which) -> {
+                    suppressGentleWakeListener = true;
+                    gentleWake.setChecked(true);
+                    suppressGentleWakeListener = false;
+                    saveGentleWake((slider.getProgress() + 1) * 100,
+                            (holdSlider.getProgress() + 1) * 100,
+                            longCloseMinutes(resetTime.getProgress()) * 60000L, resetLevel.getProgress() + 1,
+                            resetEnabled.isChecked());
+                })
+                .setNegativeButton("Cancel", (dialog, which) -> gentleWake.setChecked(wasEnabled))
+                .setOnCancelListener(dialog -> gentleWake.setChecked(wasEnabled))
+                .create();
+        wakeDialog.setOnShowListener(d -> wakeDialog.getWindow().getDecorView().setSystemUiVisibility(
+                View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                        | View.SYSTEM_UI_FLAG_FULLSCREEN | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                        | View.SYSTEM_UI_FLAG_LAYOUT_STABLE));
+        wakeDialog.show();
+        if (wakeDialog.getWindow() != null) {
+            GradientDrawable dialogBackground = new GradientDrawable();
+            dialogBackground.setColor(themeColor(android.R.attr.colorBackground));
+            dialogBackground.setCornerRadius(dp(14));
+            wakeDialog.getWindow().setBackgroundDrawable(dialogBackground);
+            wakeDialog.getWindow().setLayout((int) (getResources().getDisplayMetrics().widthPixels * 0.96f),
+                    ViewGroup.LayoutParams.WRAP_CONTENT);
+        }
+        wakeDialog.getButton(AlertDialog.BUTTON_POSITIVE).setText(wasEnabled ? "Save" : "Enable");
     }
 
     private String formatWakeDuration(int durationMs) {
         return String.format(java.util.Locale.ROOT, "%.1f seconds", durationMs / 1000f);
     }
 
-    private void saveGentleWake(int duration, int holdDuration, long resetTimeout, int resetBrightness) {
+    private String formatLongClose(int minutes) {
+        if (minutes < 60) return String.format(java.util.Locale.ROOT, "%02d Minutes", minutes);
+        return String.format(java.util.Locale.ROOT, "%02d hour%s %02d Minutes", minutes / 60,
+                minutes / 60 == 1 ? "" : "s",
+                minutes % 60);
+    }
+
+    private int longCloseMinutes(int progress) {
+        return progress <= 60 ? progress : 60 + (progress - 60) * 15;
+    }
+
+    private int longCloseProgress(int minutes) {
+        return minutes <= 60 ? minutes : 60 + Math.round((minutes - 60) / 15f);
+    }
+
+    private LinearLayout settingBox() {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(8), dp(4), dp(8), dp(4));
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(Color.argb(35, 190, 165, 235));
+        bg.setCornerRadius(dp(8));
+        bg.setStroke(dp(1), Color.argb(90, 190, 165, 235));
+        box.setBackground(bg);
+        return box;
+    }
+
+    private void moveIntoBox(LinearLayout parent, LinearLayout box, View... views) {
+        for (View view : views) {
+            parent.removeView(view);
+            box.addView(view);
+        }
+    }
+
+    private void saveGentleWake(int duration, int holdDuration, long resetTimeout, int resetBrightness,
+                                boolean resetEnabled) {
         prefs.edit().putBoolean(Prefs.GENTLE_WAKE, true)
                 .putInt(Prefs.GENTLE_WAKE_DURATION, duration)
                 .putInt(Prefs.WAKE_HOLD_DURATION, holdDuration)
                 .putLong(Prefs.WAKE_RESET_TIMEOUT, resetTimeout)
-                .putInt(Prefs.WAKE_RESET_BRIGHTNESS, resetBrightness).apply();
+                .putInt(Prefs.WAKE_RESET_BRIGHTNESS, resetBrightness)
+                .putBoolean(Prefs.WAKE_RESET_ENABLED, resetEnabled).apply();
     }
 
     private boolean requiredPermissionsReady() {
@@ -1165,10 +1287,12 @@ public class MainActivity extends Activity {
         // Refresh known conflict services when the app returns to the
         // foreground. This also catches ThorVolumeLink being enabled after
         // the initial root setup.
-        if (prefs.getBoolean(Prefs.ROOT_AXES, false) || hasRootAccess()) {
+        if (prefs.getBoolean(Prefs.ROOT_AXES, false)
+                || prefs.getBoolean(Prefs.SUSPEND_SERVICE, false)) {
             autoConfigureVolumeLinkSuspension();
             new Handler(Looper.getMainLooper()).postDelayed(() -> {
-                if (!isFinishing() && (prefs.getBoolean(Prefs.ROOT_AXES, false) || hasRootAccess())) {
+                if (!isFinishing() && (prefs.getBoolean(Prefs.ROOT_AXES, false)
+                        || prefs.getBoolean(Prefs.SUSPEND_SERVICE, false))) {
                     autoConfigureVolumeLinkSuspension();
                 }
             }, 1500);

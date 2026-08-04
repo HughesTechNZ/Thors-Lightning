@@ -111,7 +111,8 @@ public class BrightnessKeyService extends AccessibilityService {
                 wakeBottom = pInt(Prefs.WAKE_BOTTOM, wakeBottom);
                 long closedAt = Prefs.get(BrightnessKeyService.this).getLong(Prefs.WAKE_CLOSED_AT, 0L);
                 long timeout = Prefs.get(BrightnessKeyService.this).getLong(Prefs.WAKE_RESET_TIMEOUT, 30L * 60L * 1000L);
-                if (closedAt > 0 && android.os.SystemClock.elapsedRealtime() - closedAt >= timeout) {
+                if (Prefs.get(BrightnessKeyService.this).getBoolean(Prefs.WAKE_RESET_ENABLED, false)
+                        && closedAt > 0 && android.os.SystemClock.elapsedRealtime() - closedAt >= timeout) {
                     int reset = Prefs.get(BrightnessKeyService.this).getInt(Prefs.WAKE_RESET_BRIGHTNESS, 128);
                     wakeTop = reset;
                     wakeBottom = reset;
@@ -132,7 +133,7 @@ public class BrightnessKeyService extends AccessibilityService {
                         writeWakeBrightness(wakeTop, wakeBottom);
                         wakePending = false;
                         Log.d(TAG, "zero-hold test: one-shot brightness restore");
-                    }, pInt(Prefs.WAKE_HOLD_DURATION, 1000));
+                    }, pInt(Prefs.WAKE_HOLD_DURATION, 5000));
                     return;
                 }
                 wakeStartedAt = android.os.SystemClock.uptimeMillis();
@@ -151,7 +152,7 @@ public class BrightnessKeyService extends AccessibilityService {
                     wakeRampActive = true;
                     handler.removeCallbacks(wakeZeroGuard);
                     handler.post(wakeRunnable);
-                }, pInt(Prefs.WAKE_HOLD_DURATION, 1000));
+                }, pInt(Prefs.WAKE_HOLD_DURATION, 5000));
             }
         }
     };
@@ -460,7 +461,8 @@ public class BrightnessKeyService extends AccessibilityService {
             }
 
             if (target == Prefs.TARGET_BOTH || target == Prefs.TARGET_BOTTOM) {
-            int currentBottom = readBottomBrightness();
+            int currentBottom = cachedBottomBrightness >= 0
+                    ? cachedBottomBrightness : readBottomBrightness();
             int bottomDelta = Math.max(1, Math.round(255f * stepPercent / 100f));
             int nextBottom = clamp(currentBottom + direction * bottomDelta, 1, 255);
             cachedBottomBrightness = nextBottom;

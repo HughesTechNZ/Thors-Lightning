@@ -19,6 +19,7 @@ final class Prefs {
     static final String WAKE_RESET_BRIGHTNESS = "wake_reset_brightness";
     static final String WAKE_CLOSED_AT = "wake_closed_at";
     static final String WAKE_HOLD_DURATION = "wake_hold_duration";
+    static final String WAKE_RESET_ENABLED = "wake_reset_enabled";
     static final String WAKE_TOP = "wake_top";
     static final String WAKE_BOTTOM = "wake_bottom";
     static final String CONSUME_MODIFIER = "consume_modifier";
