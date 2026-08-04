@@ -635,7 +635,7 @@ public class MainActivity extends Activity {
         behaviour.addView(repeatLabel);
         SeekBar repeat = new SeekBar(this);
         repeat.setMax(18);
-        int savedDelay = prefs.getInt(Prefs.REPEAT_DELAY, 180);
+        int savedDelay = prefs.getInt(Prefs.REPEAT_DELAY, 150);
         repeat.setProgress(Math.max(0, Math.min(18, (savedDelay - 100) / 50)));
         updateRepeatLabel(100 + repeat.getProgress() * 50);
         repeat.setOnSeekBarChangeListener(new SimpleSeekListener() {
@@ -649,18 +649,20 @@ public class MainActivity extends Activity {
 
         LinearLayout gentleBox = new LinearLayout(this);
         gentleBox.setOrientation(LinearLayout.VERTICAL);
-        gentleBox.setPadding(dp(8), dp(1), dp(8), dp(2));
+        gentleBox.setPadding(dp(8), dp(6), dp(8), dp(6));
         GradientDrawable gentleBackground = new GradientDrawable();
         gentleBackground.setColor(Color.argb(45, 190, 165, 235));
         gentleBackground.setCornerRadius(dp(8));
         gentleBackground.setStroke(dp(1), Color.argb(90, 190, 165, 235));
         gentleBox.setBackground(gentleBackground);
-        behaviour.addView(gentleBox, matchMargins(0, 2, 0, 0));
-        TextView gentleTitle = text("Wake behavior", 13, true);
+        behaviour.addView(gentleBox, matchMargins(0, 20, 0, 0));
+        TextView gentleTitle = text("Sleep/Wake brightness", 14, true);
+        gentleTitle.setTextColor(Color.rgb(190, 165, 235));
         gentleBox.addView(gentleTitle, margins(0, 0, 0, 0));
         Switch gentleWake = new Switch(this);
-        gentleWake.setText("Sleep/Wake brightness");
+        gentleWake.setText("Enable sleep/wake brightness");
         gentleWake.setTextSize(12);
+        gentleWake.setTextColor(Color.WHITE);
         gentleWake.setChecked(prefs.getBoolean(Prefs.GENTLE_WAKE, false));
         gentleWake.setOnCheckedChangeListener((button, checked) -> {
             if (suppressGentleWakeListener) return;
@@ -673,23 +675,9 @@ public class MainActivity extends Activity {
         configureWake.setAllCaps(false);
         configureWake.setOnClickListener(v -> showGentleWakeSettings(gentleWake));
         gentleBox.addView(configureWake, matchMargins(0, 0, 0, 0));
-        TextView gentleHint = text("Tap to choose wake-up speed.", 10, false);
+        TextView gentleHint = text("Configure the black hold, ramp, and long-close reset.", 10, false);
         gentleHint.setTextColor(themeColor(android.R.attr.textColorSecondary));
         gentleBox.addView(gentleHint, margins(0, 0, 0, 0));
-
-        Space safetySpacer = new Space(this);
-        behaviour.addView(safetySpacer, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
-
-        safetyLabel = text("", 11, false);
-        safetyLabel.setTextColor(Color.rgb(80, 60, 20));
-        GradientDrawable safetyBackground = new GradientDrawable();
-        safetyBackground.setColor(Color.rgb(255, 246, 210));
-        safetyBackground.setCornerRadius(dp(8));
-        safetyLabel.setBackground(safetyBackground);
-        safetyLabel.setPadding(dp(10), dp(5), dp(10), dp(5));
-        updateSafetyText();
-        behaviour.addView(safetyLabel, margins(0, 0, 0, 6));
 
     }
 
@@ -762,7 +750,7 @@ public class MainActivity extends Activity {
             }
         });
         content.addView(slider, matchMargins(0, 0, 0, 0));
-        int holdMs = Math.max(100, Math.min(5000, prefs.getInt(Prefs.WAKE_HOLD_DURATION, 5000)));
+        int holdMs = Math.max(100, Math.min(5000, prefs.getInt(Prefs.WAKE_HOLD_DURATION, 1000)));
         TextView holdValue = text("Black hold: " + formatWakeDuration(holdMs), 15, true);
         content.addView(holdValue, matchMargins(0, 6, 0, 0));
         content.addView(text("Keeps both screens dark after wake before the ramp starts.", 12, false), matchMargins(0, 0, 0, 2));
@@ -1407,8 +1395,10 @@ public class MainActivity extends Activity {
         new AlertDialog.Builder(this)
                 .setCustomTitle(centeredDialogTitle("Welcome to Thor's Lightning! \u26A1"))
                 .setMessage("This app lets you use the AYN Thor's controller inputs to adjust the screen brightness!\n\nTo get started, tap \"Set up permissions\" to allow the app to function.")
-                .setPositiveButton("Got it", (dialog, which) ->
-                        prefs.edit().putBoolean(Prefs.SETUP_GUIDE_SHOWN, true).apply())
+                .setPositiveButton("Got it", (dialog, which) -> {
+                    prefs.edit().putBoolean(Prefs.SETUP_GUIDE_SHOWN, true).apply();
+                    new Handler(Looper.getMainLooper()).postDelayed(this::maybeShowConflictWarning, 250);
+                })
                 .show();
     }
 
@@ -1439,6 +1429,7 @@ public class MainActivity extends Activity {
     }
 
     private void maybeShowConflictWarning() {
+        if (!prefs.getBoolean(Prefs.SETUP_GUIDE_SHOWN, false)) return;
         java.util.Set<String> detected = knownConflictServicesEnabled();
         java.util.Set<String> acknowledged = prefs.getStringSet(
                 Prefs.CONFLICT_WARNING_SERVICES, java.util.Collections.emptySet());
@@ -1451,7 +1442,7 @@ public class MainActivity extends Activity {
                 .putStringSet(Prefs.CONFLICT_WARNING_SERVICES, updatedAcknowledged).apply();
         new AlertDialog.Builder(this)
                 .setCustomTitle(centeredDialogTitle("Controller conflict detected"))
-                .setMessage("Another Thor volume-control service is enabled. Both apps may respond to the same volume or controller input, which can make brightness and volume change together.\n\nIf you want Thor's Lightning to take priority while the modifier is held, enable \"Suspend services during hold\" and choose the detected service. You can dismiss this notice and change the option later.")
+                .setMessage("Another Thor volume-control service is enabled. Both apps may respond to the same volume or controller input, which can make brightness and volume change together.\n\nRoot access is required for \"Suspend services during hold\". If you want Thor's Lightning to take priority while the modifier is held, enable \"Suspend services during hold\" and choose the detected service. You can dismiss this notice and change the option later.")
                 .setPositiveButton("Got it", null)
                 .show();
     }

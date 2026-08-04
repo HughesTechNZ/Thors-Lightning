@@ -133,7 +133,7 @@ public class BrightnessKeyService extends AccessibilityService {
                         writeWakeBrightness(wakeTop, wakeBottom);
                         wakePending = false;
                         Log.d(TAG, "zero-hold test: one-shot brightness restore");
-                    }, pInt(Prefs.WAKE_HOLD_DURATION, 5000));
+                    }, pInt(Prefs.WAKE_HOLD_DURATION, 1000));
                     return;
                 }
                 wakeStartedAt = android.os.SystemClock.uptimeMillis();
@@ -152,7 +152,7 @@ public class BrightnessKeyService extends AccessibilityService {
                     wakeRampActive = true;
                     handler.removeCallbacks(wakeZeroGuard);
                     handler.post(wakeRunnable);
-                }, pInt(Prefs.WAKE_HOLD_DURATION, 5000));
+                }, pInt(Prefs.WAKE_HOLD_DURATION, 1000));
             }
         }
     };
@@ -438,7 +438,7 @@ public class BrightnessKeyService extends AccessibilityService {
     }
 
     private int repeatDelay() {
-        return Prefs.get(this).getInt(Prefs.REPEAT_DELAY, 180);
+        return Prefs.get(this).getInt(Prefs.REPEAT_DELAY, 150);
     }
 
     private void adjustBrightness(int direction, int stepPercent) {

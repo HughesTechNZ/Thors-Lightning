@@ -9,7 +9,7 @@ firmware.
 > Technologies Co., Ltd. AYN and Thor are used only to identify the compatible
 > device. All related trademarks belong to their respective owners.
 
-![Thor's Lightning dashboard](docs/dashboard-v1.2.png)
+![Thor's Lightning dashboard](docs/dashboard-v1.3.png)
 
 ## What it does
 
@@ -33,6 +33,10 @@ firmware.
   permission is needed or enabled.
 - **Boot persistence:** Android can restart the accessibility service after
   reboot once the service has been enabled by the user.
+- **Sleep/Wake brightness:** hold both screens dark briefly after wake, then
+  ramp back to the brightness levels saved before closing or sleeping.
+- **Long-close reset:** optionally use a chosen default brightness after a
+  configurable period closed, from 0 minutes to 24 hours.
 
 The non-root path is built around Android's accessibility key-event handling.
 Root input support is optional and exists for controls that Android does not
@@ -78,6 +82,9 @@ input reservation matters.
 6. If another accessibility app responds to the same controller buttons, turn
    on **Suspend services during hold** and select the services to pause while
    the modifier is held.
+7. To configure wake behavior, open **Sleep/Wake brightness**. Set the black
+   hold, ramp duration, optional long-close reset, reset time, and reset level.
+   The long-close reset is off by default.
 
 ## Building
 
@@ -151,6 +158,21 @@ Additional improvements:
   for better readability on Thor's three-button navigation layout.
 - Enabled Android immersive mode to keep the navigation bar from interfering
   with the app layout and avoid GUI rendering issues.
+
+### v1.3
+
+- Added configurable Sleep/Wake brightness behavior with a short black hold and
+  smooth ramp back to each screen's saved level.
+- Added optional long-close reset behavior with a 0-minute to 24-hour timeout
+  and configurable reset brightness.
+- Improved independent top/bottom brightness capture during Thor lid and sleep
+  transitions.
+- Reworked Sleep/Wake settings into grouped, rounded sections with clearer
+  explanations and safer enable/save behavior.
+- Updated first-run conflict messaging to explain when root is required for
+  suspending another accessibility service.
+- Refined layout spacing, immersive popup behavior, default timing values, and
+  setup text for the current Thor display and navigation layout.
 
 ## License
 
