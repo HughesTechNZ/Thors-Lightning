@@ -282,6 +282,8 @@ public class BrightnessKeyService extends AccessibilityService {
         IntentFilter screenOn = new IntentFilter(Intent.ACTION_SCREEN_ON);
         registerReceiver(screenReceiver, screenOn);
         sensorManager = (SensorManager) getSystemService(SENSOR_SERVICE);
+        Log.d(TAG, "controller reads top=" + AynDisplayController.getBrightness(0)
+                + " bottom=" + AynDisplayController.getBrightness(4));
         if (sensorManager != null) {
             for (Sensor sensor : sensorManager.getSensorList(Sensor.TYPE_ALL)) {
                 if (sensor.getName().toLowerCase(java.util.Locale.ROOT).contains("hall effect")) {
@@ -474,13 +476,17 @@ public class BrightnessKeyService extends AccessibilityService {
         }
         int stored;
         try {
-            stored = Settings.Secure.getInt(getContentResolver(),
+            stored = Settings.System.getInt(getContentResolver(),
                     "dual_screen_brightness_level");
         } catch (Settings.SettingNotFoundException exception) {
-            // Thor does not expose the lower panel's current level on all
-            // firmware builds; use full brightness rather than an arbitrary
-            // mid-level fallback when capturing a wake target.
-            stored = 100;
+            try {
+                stored = Settings.Secure.getInt(getContentResolver(),
+                        "dual_screen_brightness_level");
+            } catch (Settings.SettingNotFoundException ignored) {
+                // If the lower-panel value is unavailable, mirror the readable
+                // top-panel value rather than inventing a fixed brightness.
+                return clamp(readSystemInt(Settings.System.SCREEN_BRIGHTNESS, 128), 1, 255);
+            }
         }
         cachedBottomBrightness = clamp(Math.round(stored * 2.55f), 1, 255);
         return cachedBottomBrightness;
