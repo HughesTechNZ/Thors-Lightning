@@ -15,6 +15,10 @@ final class Prefs {
     static final String REPEAT_DELAY = "repeat_delay";
     static final String GENTLE_WAKE = "gentle_wake";
     static final String GENTLE_WAKE_DURATION = "gentle_wake_duration";
+    static final String WAKE_RESET_TIMEOUT = "wake_reset_timeout";
+    static final String WAKE_RESET_BRIGHTNESS = "wake_reset_brightness";
+    static final String WAKE_CLOSED_AT = "wake_closed_at";
+    static final String WAKE_HOLD_DURATION = "wake_hold_duration";
     static final String WAKE_TOP = "wake_top";
     static final String WAKE_BOTTOM = "wake_bottom";
     static final String CONSUME_MODIFIER = "consume_modifier";

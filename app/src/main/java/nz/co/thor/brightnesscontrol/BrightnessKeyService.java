@@ -26,7 +26,7 @@ public class BrightnessKeyService extends AccessibilityService {
     private static final String TAG = "ThorsLightningWake";
     // Temporary diagnostic mode: verify that close writes zero and that the
     // system does not restore brightness on open before re-enabling the ramp.
-    private static final boolean WAKE_ZERO_TEST_MODE = true;
+    private static final boolean WAKE_ZERO_TEST_MODE = false;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private boolean wakePending;
     private boolean wakeRampActive;
@@ -75,12 +75,7 @@ public class BrightnessKeyService extends AccessibilityService {
                 // screen-off value. Capture the real target here.
                 if (value < 0.5f && (Prefs.get(BrightnessKeyService.this)
                         .getBoolean(Prefs.GENTLE_WAKE, false) || WAKE_ZERO_TEST_MODE)) {
-                    int observedTop = readSystemInt(Settings.System.SCREEN_BRIGHTNESS, 128);
-                    wakeTop = observedTop > 1 ? observedTop : pInt(Prefs.WAKE_TOP, 255);
-                    wakeBottom = readBottomBrightness();
-                    Prefs.get(BrightnessKeyService.this).edit()
-                            .putInt(Prefs.WAKE_TOP, wakeTop)
-                            .putInt(Prefs.WAKE_BOTTOM, wakeBottom).apply();
+                    captureWakeTargets();
                     Log.d(TAG, "hall close saved targetTop=" + wakeTop + " targetBottom=" + wakeBottom);
                 }
                 if (Prefs.get(BrightnessKeyService.this).getBoolean(Prefs.GENTLE_WAKE, false)) {
@@ -99,11 +94,9 @@ public class BrightnessKeyService extends AccessibilityService {
                     && !WAKE_ZERO_TEST_MODE) return;
             if (Intent.ACTION_SCREEN_OFF.equals(intent.getAction())) {
                 SharedPreferences p = Prefs.get(BrightnessKeyService.this);
-                int observedTop = readSystemInt(Settings.System.SCREEN_BRIGHTNESS, 128);
-                wakeTop = observedTop > 1 ? observedTop : pInt(Prefs.WAKE_TOP, 255);
-                wakeBottom = readBottomBrightness();
-                p.edit().putInt(Prefs.WAKE_TOP, wakeTop).putInt(Prefs.WAKE_BOTTOM, wakeBottom).apply();
+                captureWakeTargets();
                 wakePending = true;
+                p.edit().putLong(Prefs.WAKE_CLOSED_AT, android.os.SystemClock.elapsedRealtime()).apply();
                 handler.removeCallbacks(wakeRunnable);
                 // Keep the saved target, but leave the displays at a low level
                 // so Android cannot visibly restore the old brightness first.
@@ -116,6 +109,14 @@ public class BrightnessKeyService extends AccessibilityService {
             } else if (Intent.ACTION_SCREEN_ON.equals(intent.getAction()) && wakePending) {
                 wakeTop = pInt(Prefs.WAKE_TOP, wakeTop);
                 wakeBottom = pInt(Prefs.WAKE_BOTTOM, wakeBottom);
+                long closedAt = Prefs.get(BrightnessKeyService.this).getLong(Prefs.WAKE_CLOSED_AT, 0L);
+                long timeout = Prefs.get(BrightnessKeyService.this).getLong(Prefs.WAKE_RESET_TIMEOUT, 30L * 60L * 1000L);
+                if (closedAt > 0 && android.os.SystemClock.elapsedRealtime() - closedAt >= timeout) {
+                    int reset = Prefs.get(BrightnessKeyService.this).getInt(Prefs.WAKE_RESET_BRIGHTNESS, 128);
+                    wakeTop = reset;
+                    wakeBottom = reset;
+                    Log.d(TAG, "long-close reset brightness=" + reset);
+                }
                 // Apply the dim starting point synchronously before scheduling
                 // the small, frequent ramp increments.
                 writeWakeBrightness(0, 0);
@@ -131,7 +132,7 @@ public class BrightnessKeyService extends AccessibilityService {
                         writeWakeBrightness(wakeTop, wakeBottom);
                         wakePending = false;
                         Log.d(TAG, "zero-hold test: one-shot brightness restore");
-                    }, 10000);
+                    }, pInt(Prefs.WAKE_HOLD_DURATION, 1000));
                     return;
                 }
                 wakeStartedAt = android.os.SystemClock.uptimeMillis();
@@ -150,7 +151,7 @@ public class BrightnessKeyService extends AccessibilityService {
                     wakeRampActive = true;
                     handler.removeCallbacks(wakeZeroGuard);
                     handler.post(wakeRunnable);
-                }, 10000);
+                }, pInt(Prefs.WAKE_HOLD_DURATION, 1000));
             }
         }
     };
@@ -321,6 +322,19 @@ public class BrightnessKeyService extends AccessibilityService {
         return Prefs.get(this).getInt(key, fallback);
     }
 
+    private void captureWakeTargets() {
+        int top = readSystemInt(Settings.System.SCREEN_BRIGHTNESS, 128);
+        int bottom = readBottomBrightness();
+        // Keep equivalent percentages when only one panel reports a usable
+        // value during the lid transition.
+        if (top <= 1 && bottom > 1) top = bottom;
+        if (bottom <= 1 && top > 1) bottom = top;
+        wakeTop = clamp(top, 1, 255);
+        wakeBottom = clamp(bottom, 1, 255);
+        Prefs.get(this).edit().putInt(Prefs.WAKE_TOP, wakeTop)
+                .putInt(Prefs.WAKE_BOTTOM, wakeBottom).apply();
+    }
+
     private void writeWakeBrightness(int top, int bottom) {
         try {
             Settings.System.putInt(getContentResolver(), Settings.System.SCREEN_BRIGHTNESS_MODE,
@@ -329,7 +343,7 @@ public class BrightnessKeyService extends AccessibilityService {
             // display controller's panel ID is valid for the lower screen.
             Settings.System.putInt(getContentResolver(), Settings.System.SCREEN_BRIGHTNESS,
                     Math.max(0, top));
-            setAynDisplayBrightness(0, Math.max(0, top));
+            AynDisplayController.setBrightness(0, Math.max(0, top));
             setAynDisplayBrightness(4, Math.max(0, bottom));
         } catch (Exception ignored) { }
     }
@@ -471,9 +485,6 @@ public class BrightnessKeyService extends AccessibilityService {
     }
 
     private int readBottomBrightness() {
-        if (cachedBottomBrightness >= 0) {
-            return cachedBottomBrightness;
-        }
         int stored;
         try {
             stored = Settings.System.getInt(getContentResolver(),

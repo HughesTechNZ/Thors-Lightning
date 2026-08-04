@@ -739,10 +739,48 @@ public class MainActivity extends Activity {
             }
         });
         content.addView(slider, matchMargins(0, 0, 0, 0));
+        int holdMs = Math.max(100, Math.min(10000, prefs.getInt(Prefs.WAKE_HOLD_DURATION, 1000)));
+        TextView holdValue = text("Black hold: " + formatWakeDuration(holdMs), 15, true);
+        content.addView(holdValue, matchMargins(0, 6, 0, 0));
+        SeekBar holdSlider = new SeekBar(this);
+        holdSlider.setMax(99);
+        holdSlider.setProgress((holdMs / 100) - 1);
+        holdSlider.setOnSeekBarChangeListener(new SimpleSeekListener() {
+            @Override public void onProgressChanged(SeekBar bar, int progress, boolean fromUser) {
+                holdValue.setText("Black hold: " + formatWakeDuration((progress + 1) * 100));
+            }
+        });
+        content.addView(holdSlider, matchMargins(0, 0, 0, 0));
+        int resetMinutes = Math.max(1, Math.min(240,
+                (int) (prefs.getLong(Prefs.WAKE_RESET_TIMEOUT, 30L * 60L * 1000L) / 60000L)));
+        TextView resetValue = text("Long-close reset: after " + resetMinutes + " minutes", 15, true);
+        content.addView(resetValue, matchMargins(0, 6, 0, 0));
+        SeekBar resetTime = new SeekBar(this);
+        resetTime.setMax(239);
+        resetTime.setProgress(resetMinutes - 1);
+        resetTime.setOnSeekBarChangeListener(new SimpleSeekListener() {
+            @Override public void onProgressChanged(SeekBar bar, int progress, boolean fromUser) {
+                resetValue.setText("Long-close reset: after " + (progress + 1) + " minutes");
+            }
+        });
+        content.addView(resetTime, matchMargins(0, 0, 0, 0));
+        TextView resetBrightness = text("Reset brightness: 50%", 15, true);
+        content.addView(resetBrightness, matchMargins(0, 4, 0, 0));
+        SeekBar resetLevel = new SeekBar(this);
+        resetLevel.setMax(254);
+        resetLevel.setProgress(prefs.getInt(Prefs.WAKE_RESET_BRIGHTNESS, 128) - 1);
+        resetLevel.setOnSeekBarChangeListener(new SimpleSeekListener() {
+            @Override public void onProgressChanged(SeekBar bar, int progress, boolean fromUser) {
+                resetBrightness.setText("Reset brightness: " + Math.round((progress + 1) * 100f / 255f) + "%");
+            }
+        });
+        content.addView(resetLevel, matchMargins(0, 0, 0, 0));
         new AlertDialog.Builder(this)
                 .setCustomTitle(centeredDialogTitle("Gentle brightness on wake"))
                 .setView(content)
-                .setPositiveButton("Enable", (dialog, which) -> saveGentleWake((slider.getProgress() + 1) * 100))
+                .setPositiveButton("Enable", (dialog, which) -> saveGentleWake((slider.getProgress() + 1) * 100,
+                        (holdSlider.getProgress() + 1) * 100,
+                        (resetTime.getProgress() + 1) * 60000L, resetLevel.getProgress() + 1))
                 .setNegativeButton("Cancel", (dialog, which) -> gentleWake.setChecked(false))
                 .setOnCancelListener(dialog -> gentleWake.setChecked(false))
                 .show();
@@ -752,9 +790,12 @@ public class MainActivity extends Activity {
         return String.format(java.util.Locale.ROOT, "%.1f seconds", durationMs / 1000f);
     }
 
-    private void saveGentleWake(int duration) {
+    private void saveGentleWake(int duration, int holdDuration, long resetTimeout, int resetBrightness) {
         prefs.edit().putBoolean(Prefs.GENTLE_WAKE, true)
-                .putInt(Prefs.GENTLE_WAKE_DURATION, duration).apply();
+                .putInt(Prefs.GENTLE_WAKE_DURATION, duration)
+                .putInt(Prefs.WAKE_HOLD_DURATION, holdDuration)
+                .putLong(Prefs.WAKE_RESET_TIMEOUT, resetTimeout)
+                .putInt(Prefs.WAKE_RESET_BRIGHTNESS, resetBrightness).apply();
     }
 
     private boolean requiredPermissionsReady() {
