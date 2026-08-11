@@ -29,6 +29,7 @@ public class BrightnessKeyService extends AccessibilityService {
     private static final boolean WAKE_ZERO_TEST_MODE = false;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private boolean wakePending;
+    private boolean wakeCapturedForClose;
     private boolean wakeRampActive;
     private int wakeTop = -1;
     private int wakeBottom = -1;
@@ -76,6 +77,7 @@ public class BrightnessKeyService extends AccessibilityService {
                 if (value < 0.5f && (Prefs.get(BrightnessKeyService.this)
                         .getBoolean(Prefs.GENTLE_WAKE, false) || WAKE_ZERO_TEST_MODE)) {
                     captureWakeTargets();
+                    wakeCapturedForClose = true;
                     Log.d(TAG, "hall close saved targetTop=" + wakeTop + " targetBottom=" + wakeBottom);
                 }
                 if (Prefs.get(BrightnessKeyService.this).getBoolean(Prefs.GENTLE_WAKE, false)) {
@@ -94,7 +96,10 @@ public class BrightnessKeyService extends AccessibilityService {
                     && !WAKE_ZERO_TEST_MODE) return;
             if (Intent.ACTION_SCREEN_OFF.equals(intent.getAction())) {
                 SharedPreferences p = Prefs.get(BrightnessKeyService.this);
-                captureWakeTargets();
+                // Hall close normally captures the real level before Android
+                // applies its screen-off minimum. Do not overwrite that with
+                // the later dimmed value from ACTION_SCREEN_OFF.
+                if (!wakeCapturedForClose) captureWakeTargets();
                 wakePending = true;
                 p.edit().putLong(Prefs.WAKE_CLOSED_AT, android.os.SystemClock.elapsedRealtime()).apply();
                 handler.removeCallbacks(wakeRunnable);
@@ -109,6 +114,7 @@ public class BrightnessKeyService extends AccessibilityService {
             } else if (Intent.ACTION_SCREEN_ON.equals(intent.getAction()) && wakePending) {
                 wakeTop = pInt(Prefs.WAKE_TOP, wakeTop);
                 wakeBottom = pInt(Prefs.WAKE_BOTTOM, wakeBottom);
+                wakeCapturedForClose = false;
                 long closedAt = Prefs.get(BrightnessKeyService.this).getLong(Prefs.WAKE_CLOSED_AT, 0L);
                 long timeout = Prefs.get(BrightnessKeyService.this).getLong(Prefs.WAKE_RESET_TIMEOUT, 30L * 60L * 1000L);
                 if (Prefs.get(BrightnessKeyService.this).getBoolean(Prefs.WAKE_RESET_ENABLED, false)
