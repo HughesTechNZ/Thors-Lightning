@@ -21,9 +21,8 @@ firmware.
   from standard Android controller buttons.
 - **Non-root volume support:** volume up and volume down work without root and
   are reserved while mapped for brightness.
-- **Optional root input support:** rooted devices can record any D-pad or
-  analog-stick direction for Bright and Dimmer controls, including different
-  controls or directions for each function.
+- **Optional privileged input support:** devices with Root or Shizuku can
+  record any D-pad or analog-stick direction for Bright and Dimmer controls.
 - **Modifier reservation option:** root users can optionally reserve the
   modifier itself while brightness controls are held.
 - **Service conflict handling:** select multiple accessibility services to
@@ -59,7 +58,7 @@ top/bottom brightness differences intact during normal adjustment.
 - AYN Thor running the compatible Android 13 firmware
 - Accessibility service enabled for Thor's Lightning
 - Android brightness write permission
-- Root access only if using D-pad or analog-stick mappings
+- Root or Shizuku access only if using D-pad or analog-stick mappings
 
 Root axis input has platform limits. D-pad and stick directions may still be
 visible to games, and analog sticks cannot physically send both directions on
@@ -77,8 +76,8 @@ input reservation matters.
 4. Choose the modifier, Bright, Dimmer, and screen-target options. For root
    input, tap a Bright or Dimmer **Record** button and move the direction you
    want to assign; the app identifies the D-pad or stick automatically.
-5. Enable root input only if you want D-pad or analog-stick mappings, then
-   approve the root-access prompt from your installed root manager.
+5. Enable privileged input only if you want D-pad or analog-stick mappings,
+   then approve Root or Shizuku access when prompted.
 6. If another accessibility app responds to the same controller buttons, turn
    on **Suspend services during hold** and select the services to pause while
    the modifier is held.

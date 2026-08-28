@@ -332,13 +332,21 @@ public class BrightnessKeyService extends AccessibilityService {
     private void captureWakeTargets() {
         int top = readSystemInt(Settings.System.SCREEN_BRIGHTNESS, 128);
         int bottom = readBottomBrightness();
+        SharedPreferences prefs = Prefs.get(this);
+        int savedTop = prefs.getInt(Prefs.WAKE_TOP, -1);
+        int savedBottom = prefs.getInt(Prefs.WAKE_BOTTOM, -1);
+        // During a lid transition Android can briefly report its screen-off
+        // floor (0-2) instead of the user's actual level.  Never replace a
+        // valid saved target with that transient reading.
+        if (top <= 2) top = savedTop > 2 ? savedTop : 128;
+        if (bottom <= 2) bottom = savedBottom > 2 ? savedBottom : 128;
         // Keep equivalent percentages when only one panel reports a usable
         // value during the lid transition.
         if (top <= 1 && bottom > 1) top = bottom;
         if (bottom <= 1 && top > 1) bottom = top;
         wakeTop = clamp(top, 1, 255);
         wakeBottom = clamp(bottom, 1, 255);
-        Prefs.get(this).edit().putInt(Prefs.WAKE_TOP, wakeTop)
+        prefs.edit().putInt(Prefs.WAKE_TOP, wakeTop)
                 .putInt(Prefs.WAKE_BOTTOM, wakeBottom).apply();
     }
 

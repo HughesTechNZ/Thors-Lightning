@@ -36,6 +36,7 @@ import android.widget.SeekBar;
 import android.widget.Space;
 import android.widget.Switch;
 import android.widget.TextView;
+import rikka.shizuku.Shizuku;
 import android.widget.Toast;
 
 public class MainActivity extends Activity {
@@ -57,6 +58,7 @@ public class MainActivity extends Activity {
     private TextView keyStatus;
     private Switch suspendServicesSwitch;
     private Button checkRootButton;
+    private Button rootCheckPrimary;
     private boolean rootCheckRunning;
     private Switch enabledSwitch;
     private final SharedPreferences.OnSharedPreferenceChangeListener preferenceListener =
@@ -88,6 +90,21 @@ public class MainActivity extends Activity {
         // capture mode on the next launch.
         prefs.edit().putBoolean(Prefs.CAPTURING, false).apply();
         super.onCreate(state);
+        Shizuku.addRequestPermissionResultListener((requestCode, grantResult) -> {
+            if (requestCode == 1001 && checkRootButton != null) {
+                // Android may publish the grant just after delivering the
+                // callback, so refresh once immediately and once shortly
+                // afterward to ensure the button reflects the final state.
+                runOnUiThread(() -> {
+                    refreshPrivilegeButton();
+                    if (grantResult == android.content.pm.PackageManager.PERMISSION_GRANTED
+                            && !selectedSuspendServices().isEmpty()) {
+                        prefs.edit().putBoolean(Prefs.SUSPEND_SERVICE, true).apply();
+                        if (suspendServicesSwitch != null) suspendServicesSwitch.setChecked(true);
+                    }
+                });
+            }
+        });
         hideNavigationBar();
         migrateUnsupportedMappings();
         buildUi();
@@ -168,7 +185,7 @@ public class MainActivity extends Activity {
         styleSetupButton(brightnessPermissionButton);
         brightnessPermissionButton.setGravity(Gravity.CENTER);
         brightnessPermissionButton.setTextSize(14);
-        brightnessPermissionButton.setHeight(dp(40));
+        brightnessPermissionButton.setHeight(dp(36));
         brightnessPermissionButton.setOnClickListener(v -> {
             if (Settings.System.canWrite(this) && isAccessibilityServiceEnabled()) {
                 AlertDialog complete = new AlertDialog.Builder(this)
@@ -203,6 +220,7 @@ public class MainActivity extends Activity {
             openBrightnessPermission();
         });
         setup.addView(brightnessPermissionButton, matchMargins(0, 0, 0, 3));
+        brightnessPermissionButton.getLayoutParams().height = dp(36);
 
         keyDetectionButton = button("2. Key detection");
         styleSetupButton(keyDetectionButton);
@@ -305,11 +323,12 @@ public class MainActivity extends Activity {
         rootBackground.setStroke(dp(1), Color.argb(90, 190, 165, 235));
         rootBox.setBackground(rootBackground);
         parent.addView(rootBox, margins(0, 5, 0, 0));
-        rootBox.addView(section("Root options"), margins(0, 0, 0, 0));
-        rootStatus = text("Root access is optional for regular button mappings.", 12, false);
+        rootBox.addView(section("Privileged input options"), margins(0, 0, 0, 0));
+        rootStatus = text("Root or Shizuku access is optional for regular button mappings.", 12, false);
         rootStatus.setTextColor(themeColor(android.R.attr.textColorSecondary));
         rootBox.addView(rootStatus, margins(0, 0, 0, 1));
-        Button rootCheckFirst = button("Check root access");
+        Button rootCheckFirst = button("Check privilege access");
+        rootCheckPrimary = rootCheckFirst;
         styleSetupButton(rootCheckFirst);
         rootCheckFirst.setTextSize(14);
         rootCheckFirst.setHeight(dp(36));
@@ -329,7 +348,7 @@ public class MainActivity extends Activity {
         updateRootCheckVisual(rootCheckFirst);
 
 
-        checkRootButton = button("Check root access");
+        checkRootButton = button("Check privilege access");
         styleSetupButton(checkRootButton);
         checkRootButton.setTextSize(14);
         checkRootButton.setHeight(dp(36));
@@ -365,20 +384,26 @@ public class MainActivity extends Activity {
         rootBox.addView(chooseService, matchMargins(0, 0, 0, 0));
         chooseService.getLayoutParams().height = dp(36);
         chooseService.setTranslationY(0);
-        chooseService.setOnClickListener(v -> chooseSuspendedService());
+        chooseService.setOnClickListener(v -> {
+            if (!hasRootAccess() && !ShizukuSupport.available()) {
+                Toast.makeText(this, "Root/Shizuku access is needed to choose services.", Toast.LENGTH_LONG).show();
+                return;
+            }
+            chooseSuspendedService();
+        });
         suspend.setOnCheckedChangeListener((button, checked) -> {
-            if (checked && (!hasRootAccess() || selectedSuspendServices().isEmpty())) {
+            if (checked && ((!hasRootAccess() && !ShizukuSupport.available()) || selectedSuspendServices().isEmpty())) {
                 button.setChecked(false);
-                Toast.makeText(this, "Check root access and choose an enabled service first", Toast.LENGTH_LONG).show();
+                Toast.makeText(this, "Enable Root/Shizuku and choose a service first.", Toast.LENGTH_LONG).show();
                 return;
             }
             prefs.edit().putBoolean(Prefs.SUSPEND_SERVICE, checked).apply();
         });
 
         rootAxes.setOnCheckedChangeListener((button, checked) -> {
-            if (checked && !hasRootAccess()) {
+            if (checked && !hasRootAccess() && !ShizukuSupport.available()) {
                 button.setChecked(false);
-                Toast.makeText(this, "Root access was not granted", Toast.LENGTH_LONG).show();
+                Toast.makeText(this, "Root/Shizuku access is needed for D-pad or joystick input.", Toast.LENGTH_LONG).show();
                 updateRootStatus(false);
                 return;
             }
@@ -399,10 +424,10 @@ public class MainActivity extends Activity {
             updateSafetyText();
             if (checked) {
                 new AlertDialog.Builder(this)
-                        .setTitle("Root input limitations")
-                        .setMessage("Root access is required to read D-pad and stick directions. Please be aware:\n\n"
+                        .setTitle("Privileged input limitations")
+                        .setMessage("Root or Shizuku access is required to read D-pad and stick directions. Please be aware:\n\n"
                                 + "• These controls are available for Brighter and Dimmer mappings only; they cannot be used as the modifier.\n"
-                                + "• Root reading does not guarantee that games will stop receiving the same movement. A game may react at the same time as the brightness change.\n"
+                                + "• Privileged input reading does not guarantee that games will stop receiving the same movement. A game may react at the same time as the brightness change.\n"
                                 + "• Only up and down directions change brightness. Other directions can be recorded but will not adjust it.\n"
                                 + "• The Thor L2/R2 triggers can report both button presses and analogue axes, which may cause unexpected results depending on the mapping.\n\n"
                                 + "Disable this option if it causes conflicts or unwanted input.")
@@ -420,18 +445,45 @@ public class MainActivity extends Activity {
     private void checkRootAccess(Button button) {
         button.setEnabled(false);
         new Thread(() -> {
-            boolean available = hasRootAccess();
+            boolean shizuku = ShizukuSupport.available();
+            boolean shizukuNeedsPermission = ShizukuSupport.runningWithoutPermission();
+            boolean available = !shizuku && hasRootAccess();
             runOnUiThread(() -> {
                 button.setEnabled(true);
-                button.setText(available ? "Check root access - Enabled" : "Check root access - Needed");
-                button.setBackgroundTintList(ColorStateList.valueOf(available
+                if (shizukuNeedsPermission) {
+                    button.setText("Shizuku permission needed");
+                    button.setBackgroundTintList(ColorStateList.valueOf(Color.rgb(170, 115, 35)));
+                    ShizukuSupport.requestPermission();
+                    new Handler(Looper.getMainLooper()).postDelayed(this::refreshPrivilegeButton, 500);
+                    new Handler(Looper.getMainLooper()).postDelayed(this::refreshPrivilegeButton, 1500);
+                    updateRootStatus(false);
+                    return;
+                }
+                button.setText(shizuku ? "Shizuku (ADB) - Enabled"
+                        : available ? "Root access - Enabled"
+                        : "Privilege access - Needed");
+                button.setBackgroundTintList(ColorStateList.valueOf((available || shizuku)
                         ? Color.rgb(70, 130, 75) : Color.rgb(170, 115, 35)));
-                if (available) autoConfigureVolumeLinkSuspension();
-                if (rootStatus != null) rootStatus.setText(available
-                        ? "Root access is optional for regular button mappings."
-                        : "Root access is optional for regular button mappings.");
+                if (available || shizuku) autoConfigureVolumeLinkSuspension();
+                // Keep the detected privilege text visible after every check,
+                // including repeated taps on the button.
+                updateRootStatus(available || shizuku);
             });
         }, "ThorRootCheck").start();
+    }
+
+    private void refreshPrivilegeButton() {
+        new Thread(() -> {
+            boolean shizuku = ShizukuSupport.available();
+            boolean root = !shizuku && hasRootAccess();
+            runOnUiThread(() -> {
+                checkRootButton.setText(shizuku ? "Shizuku (ADB) - Enabled"
+                        : root ? "Root access - Enabled" : "Privilege access - Needed");
+                checkRootButton.setBackgroundTintList(ColorStateList.valueOf((root || shizuku)
+                        ? Color.rgb(70, 130, 75) : Color.rgb(170, 115, 35)));
+                updateRootStatus(root || shizuku);
+            });
+        }, "ThorPrivilegeRefresh").start();
     }
 
     private void openBrightnessPermission() {
@@ -666,6 +718,13 @@ public class MainActivity extends Activity {
         gentleWake.setChecked(prefs.getBoolean(Prefs.GENTLE_WAKE, false));
         gentleWake.setOnCheckedChangeListener((button, checked) -> {
             if (suppressGentleWakeListener) return;
+            if (checked && !requiredPermissionsReady()) {
+                suppressGentleWakeListener = true;
+                gentleWake.setChecked(false);
+                suppressGentleWakeListener = false;
+                Toast.makeText(this, "Set up permissions before enabling Sleep/Wake brightness.", Toast.LENGTH_LONG).show();
+                return;
+            }
             if (checked) showGentleWakeSettings(gentleWake);
             else prefs.edit().putBoolean(Prefs.GENTLE_WAKE, false).apply();
         });
@@ -673,7 +732,13 @@ public class MainActivity extends Activity {
         Button configureWake = new Button(this);
         configureWake.setText("Configure");
         configureWake.setAllCaps(false);
-        configureWake.setOnClickListener(v -> showGentleWakeSettings(gentleWake));
+        configureWake.setOnClickListener(v -> {
+            if (!requiredPermissionsReady()) {
+                Toast.makeText(this, "Set up permissions before configuring Sleep/Wake brightness.", Toast.LENGTH_LONG).show();
+                return;
+            }
+            showGentleWakeSettings(gentleWake);
+        });
         gentleBox.addView(configureWake, matchMargins(0, 0, 0, 0));
         TextView gentleHint = text("Configure the black hold, ramp, and long-close reset.", 10, false);
         gentleHint.setTextColor(themeColor(android.R.attr.textColorSecondary));
@@ -722,9 +787,11 @@ public class MainActivity extends Activity {
     }
 
     private void updateRootCheckVisual(Button button) {
-        boolean inferred = prefs.getBoolean(Prefs.ROOT_AXES, false)
-                || prefs.getBoolean(Prefs.SUSPEND_SERVICE, false);
-        button.setText(inferred ? "Check root access - Enabled" : "Check root access");
+        boolean shizuku = ShizukuSupport.available();
+        boolean root = !shizuku && hasRootAccess();
+        boolean inferred = root || shizuku;
+        button.setText(shizuku ? "Shizuku (ADB) - Enabled"
+                : root ? "Root access - Enabled" : "Check privilege access");
         button.setBackgroundTintList(ColorStateList.valueOf(inferred
                 ? Color.rgb(70, 130, 75) : Color.rgb(95, 95, 98)));
     }
@@ -997,8 +1064,8 @@ public class MainActivity extends Activity {
     }
 
     private void beginRootDirectionCapture(String preference, TextView label, String title) {
-        if (!hasRootAccess()) {
-            Toast.makeText(this, "Root access is required to record a D-pad or stick direction", Toast.LENGTH_LONG).show();
+        if (!hasRootAccess() && !ShizukuSupport.available()) {
+            Toast.makeText(this, "Root access or authorized Shizuku is required to record a D-pad or stick direction", Toast.LENGTH_LONG).show();
             return;
         }
         stopRootDirectionRecorder();
@@ -1251,6 +1318,7 @@ public class MainActivity extends Activity {
             updatePermissionStatus();
             updateSetupButtons();
         }
+        if (checkRootButton != null) refreshPrivilegeButton();
         if (prefs.getBoolean(Prefs.ADVANCE_TO_KEY_PENDING, false)
                 && Settings.System.canWrite(this)) {
             prefs.edit().putBoolean(Prefs.ADVANCE_TO_KEY_PENDING, false).apply();
@@ -1266,11 +1334,23 @@ public class MainActivity extends Activity {
             prefs.edit().putBoolean(Prefs.SETUP_COMPLETE_SHOWN, true).apply();
             new AlertDialog.Builder(this)
                     .setCustomTitle(centeredDialogTitle("\u26A1 Setup Complete! \u26A1"))
-                    .setMessage("Brightness control is ready.\n\nRoot access is required if you want to use the D-pad or analogue sticks. To do this, follow the steps below:\n\n- Tap \"Check root access\".\n- Allow root access when Android asks.\n- Turn on \"Enable D-pad / Joystick\".\n- Tap a Brighter or Dimmer \"Record\" button, then move the control and direction you want to use.\n\nNote: D-pad and stick directions can be recorded independently for Brighter and Dimmer.")
+                    .setMessage("Brightness control is ready.\n\nRoot access or Shizuku is required if you want to use the D-pad or analogue sticks. To do this, follow the steps below:\n\n- Tap \"Check privilege access\".\n- Allow root access or Shizuku access when Android asks.\n- Turn on \"Enable D-pad / Joystick\".\n- Tap a Brighter or Dimmer \"Record\" button, then move the control and direction you want to use.\n\nRecord the Bright and Dim controls separately. Each can use its own D-pad or stick direction.")
                     .setPositiveButton("Got it", null).show();
         }
         if (enabledSwitch != null) {
             enabledSwitch.setChecked(prefs.getBoolean(Prefs.ENABLED, true));
+        }
+        // Privileged features must not remain enabled after Root/Shizuku is
+        // revoked while the app is stopped or in the background.
+        if (!hasRootAccess() && !ShizukuSupport.available()) {
+            boolean axes = prefs.getBoolean(Prefs.ROOT_AXES, false);
+            boolean suspend = prefs.getBoolean(Prefs.SUSPEND_SERVICE, false);
+            if (axes || suspend) {
+                prefs.edit().putBoolean(Prefs.ROOT_AXES, false)
+                        .putBoolean(Prefs.SUSPEND_SERVICE, false).apply();
+                if (suspendServicesSwitch != null) suspendServicesSwitch.setChecked(false);
+                updateRootStatus(false);
+            }
         }
         // Refresh known conflict services when the app returns to the
         // foreground. This also catches ThorVolumeLink being enabled after
@@ -1394,7 +1474,7 @@ public class MainActivity extends Activity {
         }
         new AlertDialog.Builder(this)
                 .setCustomTitle(centeredDialogTitle("Welcome to Thor's Lightning! \u26A1"))
-                .setMessage("This app lets you use the AYN Thor's controller inputs to adjust the screen brightness!\n\nTo get started, tap \"Set up permissions\" to allow the app to function.")
+                .setMessage("This app lets you use the AYN Thor's controller inputs to adjust the screen brightness!\n\nTo get started, tap \"Set up permissions\" to allow the app to function correctly.")
                 .setPositiveButton("Got it", (dialog, which) -> {
                     prefs.edit().putBoolean(Prefs.SETUP_GUIDE_SHOWN, true).apply();
                     new Handler(Looper.getMainLooper()).postDelayed(this::maybeShowConflictWarning, 250);
@@ -1442,7 +1522,7 @@ public class MainActivity extends Activity {
                 .putStringSet(Prefs.CONFLICT_WARNING_SERVICES, updatedAcknowledged).apply();
         new AlertDialog.Builder(this)
                 .setCustomTitle(centeredDialogTitle("Controller conflict detected"))
-                .setMessage("Another Thor volume-control service is enabled. Both apps may respond to the same volume or controller input, which can make brightness and volume change together.\n\nRoot access is required for \"Suspend services during hold\". If you want Thor's Lightning to take priority while the modifier is held, enable \"Suspend services during hold\" and choose the detected service. You can dismiss this notice and change the option later.")
+                .setMessage("Another Thor volume-control service is enabled. Both apps may respond to the same volume or controller input, which can make brightness and volume change together.\n\nRoot or Shizuku access is required for \"Suspend services during hold\". If you want Thor's Lightning to take priority while the modifier is held, enable \"Suspend services during hold\" and choose the detected service. You can dismiss this notice and change the option later.")
                 .setPositiveButton("Got it", null)
                 .show();
     }
@@ -1482,9 +1562,21 @@ public class MainActivity extends Activity {
 
     private void updateRootStatus(boolean enabled) {
         if (rootStatus == null) return;
+        boolean shizuku = ShizukuSupport.available();
+        boolean root = !shizuku && hasRootAccess();
+        Button[] privilegeButtons = {checkRootButton, rootCheckPrimary};
+        for (Button privilegeButton : privilegeButtons) {
+            if (privilegeButton != null && !rootCheckRunning) {
+                privilegeButton.setText(shizuku ? "Shizuku (ADB) - Enabled"
+                        : root ? "Root access - Enabled" : "Privilege access - Needed");
+                privilegeButton.setBackgroundTintList(ColorStateList.valueOf((root || shizuku)
+                        ? Color.rgb(70, 130, 75) : Color.rgb(170, 115, 35)));
+            }
+        }
         // Keep this explanatory text stable; the switch state itself shows
         // whether root directional input is enabled.
-        rootStatus.setText("Root access is optional for regular button mappings.");
+        rootStatus.setText("Root or Shizuku access is optional for regular button mappings.\nPrivilege detected: "
+                + (shizuku ? ShizukuSupport.status() : root ? "Root" : "None"));
     }
 
     private String keyName(int code) {

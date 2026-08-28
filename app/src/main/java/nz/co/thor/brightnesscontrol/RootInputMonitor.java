@@ -3,6 +3,8 @@ package nz.co.thor.brightnesscontrol;
 import android.os.Handler;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
+import java.lang.reflect.Method;
+import android.util.Log;
 
 final class RootInputMonitor {
     interface Listener {
@@ -44,8 +46,23 @@ final class RootInputMonitor {
             // Read the complete root input stream rather than relying on a
             // fixed event-node number. Firmware updates can renumber the
             // controller device; the axis token still identifies each source.
-            process = new ProcessBuilder("su", "-c", "exec getevent -lt")
-                    .redirectErrorStream(true).start();
+            if (ShizukuSupport.available()) {
+                try {
+                    Method m = Class.forName("rikka.shizuku.Shizuku")
+                            .getDeclaredMethod("newProcess", String[].class, String[].class, String.class);
+                    m.setAccessible(true);
+                    process = (Process) m.invoke(null,
+                            new Object[]{new String[]{"sh", "-c", "exec getevent -lt"}, null, null});
+                    Log.i("ThorRootInput", "getevent started through Shizuku");
+                } catch (Exception denied) {
+                    Log.w("ThorRootInput", "Shizuku process unavailable; falling back to su", denied);
+                    process = new ProcessBuilder("su", "-c", "exec getevent -lt")
+                            .redirectErrorStream(true).start();
+                }
+            } else {
+                process = new ProcessBuilder("su", "-c", "exec getevent -lt")
+                        .redirectErrorStream(true).start();
+            }
             BufferedReader reader = new BufferedReader(
                     new InputStreamReader(process.getInputStream()));
             String line;

@@ -52,8 +52,16 @@ final class RootAccessibilityController {
 
     private static String shell(String command) {
         try {
-            Process process = new ProcessBuilder("su", "-c", command)
-                    .redirectErrorStream(true).start();
+            Process process;
+            if (ShizukuSupport.available()) {
+                java.lang.reflect.Method method = Class.forName("rikka.shizuku.Shizuku")
+                        .getDeclaredMethod("newProcess", String[].class, String[].class, String.class);
+                method.setAccessible(true);
+                process = (Process) method.invoke(null, new Object[]{new String[]{"sh", "-c", command}, null, null});
+            } else {
+                process = new ProcessBuilder("su", "-c", command)
+                        .redirectErrorStream(true).start();
+            }
             BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
             String line = reader.readLine();
             int exit = process.waitFor();
