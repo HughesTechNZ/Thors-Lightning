@@ -158,17 +158,6 @@ Additional improvements:
 - Enabled Android immersive mode to keep the navigation bar from interfering
   with the app layout and avoid GUI rendering issues.
 
-### v1.3.1
-
-- Added Shizuku as an alternative to Root for D-pad/joystick input and
-  temporarily suspending conflicting accessibility services.
-- Added an in-app Shizuku authorization prompt with automatic status updates
-  after approval or denial.
-- Privileged controls now reset safely if Root/Shizuku access is later lost.
-- Gated Sleep/Wake brightness and service selection until required permissions
-  are configured, with clearer, shorter warnings.
-- Updated the setup wording, privilege labels, and dashboard screenshot.
-
 ### v1.3
 
 - Added configurable Sleep/Wake brightness behavior with a short black hold and
@@ -183,6 +172,17 @@ Additional improvements:
   suspending another accessibility service.
 - Refined layout spacing, immersive popup behavior, default timing values, and
   setup text for the current Thor display and navigation layout.
+
+### v1.3.1
+
+- Added Shizuku as an alternative to Root for D-pad/joystick input and
+  temporarily suspending conflicting accessibility services.
+- Added an in-app Shizuku authorization prompt with automatic status updates
+  after approval or denial.
+- Privileged controls now reset safely if Root/Shizuku access is later lost.
+- Gated Sleep/Wake brightness and service selection until required permissions
+  are configured, with clearer, shorter warnings.
+- Updated the setup wording, privilege labels, and dashboard screenshot.
 
 ## License
 
