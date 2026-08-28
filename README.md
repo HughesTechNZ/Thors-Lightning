@@ -182,7 +182,6 @@ Additional improvements:
 - Privileged controls now reset safely if Root/Shizuku access is later lost.
 - Gated Sleep/Wake brightness and service selection until required permissions
   are configured, with clearer, shorter warnings.
-- Updated the setup wording, privilege labels, and dashboard screenshot.
 
 ## License
 
